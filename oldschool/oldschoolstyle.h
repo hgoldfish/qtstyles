@@ -53,7 +53,6 @@ class QProgressBar;
 class OldschoolStyle : public QCommonStyle
 {
     Q_OBJECT
-
 public:
     explicit OldschoolStyle(bool useHighlightCols=false);
     virtual ~OldschoolStyle();

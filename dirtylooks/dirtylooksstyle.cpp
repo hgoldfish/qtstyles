@@ -2099,10 +2099,6 @@ void DirtylooksStyle::drawControl(ControlElement element, const QStyleOption *op
 
                 point = QPoint(ir.x() + ir.width() / 2 - w / 2,
                                ir.y() + ir.height() / 2 - h / 2);
-                qDebug() << ir.width() << pixmap.width() << w << point;
-
-//                point = QPoint(ir.x() + 10,
-//                               ir.y() + 10);
 
                 if (button->direction == Qt::RightToLeft)
                     point.rx() += pixw;
@@ -4418,6 +4414,9 @@ int DirtylooksStyle::styleHint(StyleHint hint, const QStyleOption *option, const
         break;
     case SH_Menu_SubMenuPopupDelay:
         ret = 225; // default from GtkMenu
+        break;
+    case SH_DialogButtonLayout:
+        ret = QDialogButtonBox::KdeLayout;
         break;
     default:
         ret = QProxyStyle::styleHint(hint, option, widget, returnData);
