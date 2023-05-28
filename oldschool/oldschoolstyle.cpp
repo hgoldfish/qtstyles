@@ -2446,9 +2446,6 @@ OldschoolStyle::styleHint(StyleHint hint, const QStyleOption *opt, const QWidget
     case SH_DrawMenuBarSeparator:
         ret = true;
         break;
-    case SH_UnderlineShortcut:
-        ret = false;
-        break;
     case SH_ScrollBar_MiddleClickAbsolutePosition:
     case SH_Slider_SloppyKeyEvents:
     case SH_ProgressDialog_CenterCancelButton:
