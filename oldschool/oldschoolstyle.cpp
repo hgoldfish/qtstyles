@@ -1173,7 +1173,9 @@ void OldschoolStyle::drawControl(ControlElement element, const QStyleOption *opt
             if (!s.isNull()) {                        // draw text
                 int t = s.indexOf(QLatin1Char('\t'));
                 int m = motifItemVMargin;
-                int text_flags = Qt::AlignVCenter|Qt::TextShowMnemonic | Qt::TextDontClip | Qt::TextSingleLine;
+                int text_flags = Qt::AlignVCenter | Qt::TextShowMnemonic | Qt::TextDontClip | Qt::TextSingleLine;
+                if (!styleHint(SH_UnderlineShortcut, menuitem, widget))
+                    text_flags |= Qt::TextHideMnemonic;
                 text_flags |= Qt::AlignLeft;
                 QFont oldFont = p->font();
                 p->setFont(menuitem->font);
@@ -2444,7 +2446,9 @@ OldschoolStyle::styleHint(StyleHint hint, const QStyleOption *opt, const QWidget
     case SH_DrawMenuBarSeparator:
         ret = true;
         break;
-
+    case SH_UnderlineShortcut:
+        ret = false;
+        break;
     case SH_ScrollBar_MiddleClickAbsolutePosition:
     case SH_Slider_SloppyKeyEvents:
     case SH_ProgressDialog_CenterCancelButton:
