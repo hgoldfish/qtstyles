@@ -1128,8 +1128,8 @@ void OldschoolStyle::drawControl(ControlElement element, const QStyleOption *opt
                 else
                     pixmap = menuitem->icon.pixmap(pixelMetric(PM_SmallIconSize, opt, widget), mode);
 
-                int pixw = pixmap.width();
-                int pixh = pixmap.height();
+                int pixw = pixmap.width() / pixmap.devicePixelRatio() ;
+                int pixh = pixmap.height() / pixmap.devicePixelRatio();
                 QRect pmr(0, 0, pixw, pixh);
                 pmr.moveCenter(vrect.center());
                 p->setPen(opt->palette.text().color());
