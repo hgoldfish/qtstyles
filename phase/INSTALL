@@ -1,0 +1,12 @@
+Phase requires the Qt 4.2 or greater development library. This
+can be found at <http://www.trolltech.com>. Some Linux distributions
+separate Qt into separate runtime and development packages. If this
+is your case, Make sure you have both. Phase uses the qmake tool to
+generate makefiles, and thus depends on a properly configured Qt
+installation.
+
+To build and install:
+
+1) qmake
+2) make
+3) make install
