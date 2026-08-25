@@ -41,6 +41,7 @@
 
 #include "oldschoolstyle.h"
 #include "qtstyles_palette.h"
+#include "qstylehelper_p.h"
 
 #include "qmenu.h"
 #include "qapplication.h"
@@ -1132,11 +1133,20 @@ void OldschoolStyle::drawControl(ControlElement element, const QStyleOption *opt
                 QIcon::Mode mode = QIcon::Normal; // no disabled icons in Motif
                 if ((opt->state & State_Selected) && !!(opt->state & State_Enabled))
                     mode = QIcon::Active;
+                const int smallIconSize = pixelMetric(PM_SmallIconSize, opt, widget);
                 QPixmap pixmap;
+#if QT_VERSION >= QT_VERSION_CHECK(6, 0, 0)
+                const QSize iconSize(smallIconSize, smallIconSize);
                 if (menuitem->checkType != QStyleOptionMenuItem::NotCheckable && menuitem->checked)
-                    pixmap = menuitem->icon.pixmap(pixelMetric(PM_SmallIconSize, opt, widget), mode, QIcon::On);
+                    pixmap = menuitem->icon.pixmap(iconSize, QStyleHelper::getDpr(p), mode, QIcon::On);
                 else
-                    pixmap = menuitem->icon.pixmap(pixelMetric(PM_SmallIconSize, opt, widget), mode);
+                    pixmap = menuitem->icon.pixmap(iconSize, QStyleHelper::getDpr(p), mode);
+#else
+                if (menuitem->checkType != QStyleOptionMenuItem::NotCheckable && menuitem->checked)
+                    pixmap = menuitem->icon.pixmap(smallIconSize, mode, QIcon::On);
+                else
+                    pixmap = menuitem->icon.pixmap(smallIconSize, mode);
+#endif
 
                 int pixw = pixmap.width() / pixmap.devicePixelRatio() ;
                 int pixh = pixmap.height() / pixmap.devicePixelRatio();
@@ -1624,12 +1634,12 @@ int OldschoolStyle::pixelMetric(PixelMetric pm, const QStyleOption *opt,
 
     switch (pm) {
     case PM_ButtonDefaultIndicator:
-        ret = 5;
+        ret = qRound(QStyleHelper::dpiScaled(5, opt));
         break;
 
     case PM_CheckBoxLabelSpacing:
     case PM_RadioButtonLabelSpacing:
-        ret = 10;
+        ret = qRound(QStyleHelper::dpiScaled(10, opt));
         break;
 
     case PM_ToolBarFrameWidth:
@@ -1646,15 +1656,15 @@ int OldschoolStyle::pixelMetric(PixelMetric pm, const QStyleOption *opt,
         break;
 
     case PM_SplitterWidth:
-        ret = 10;
+        ret = qRound(QStyleHelper::dpiScaled(10, opt));
         break;
 
     case PM_SliderLength:
-        ret = 30;
+        ret = qRound(QStyleHelper::dpiScaled(30, opt));
         break;
 
     case PM_SliderThickness:
-        ret = 16 + 4 * proxy()->pixelMetric(PM_DefaultFrameWidth);
+        ret = qRound(QStyleHelper::dpiScaled(16, opt)) + 4 * proxy()->pixelMetric(PM_DefaultFrameWidth);
         break;
 #ifndef QT_NO_SLIDER
     case PM_SliderControlThickness:
@@ -1671,7 +1681,7 @@ int OldschoolStyle::pixelMetric(PixelMetric pm, const QStyleOption *opt,
                 break;
             }
 
-            int thick = 6;        // Magic constant to get 5 + 16 + 5
+            int thick = qRound(QStyleHelper::dpiScaled(6, opt));        // Magic constant to get 5 + 16 + 5
 
             space -= thick;
             //### the two sides may be unequal in size
@@ -1695,7 +1705,7 @@ int OldschoolStyle::pixelMetric(PixelMetric pm, const QStyleOption *opt,
         break;
 
     case PM_DockWidgetHandleExtent:
-        ret = 9;
+        ret = qRound(QStyleHelper::dpiScaled(9, opt));
         break;
 
     case PM_ProgressBarChunkWidth:
@@ -1704,7 +1714,7 @@ int OldschoolStyle::pixelMetric(PixelMetric pm, const QStyleOption *opt,
 
     case PM_ExclusiveIndicatorWidth:
     case PM_ExclusiveIndicatorHeight:
-        ret = 13;
+        ret = qRound(QStyleHelper::dpiScaled(13, opt));
         break;
 
     case PM_MenuBarHMargin:
@@ -1713,9 +1723,9 @@ int OldschoolStyle::pixelMetric(PixelMetric pm, const QStyleOption *opt,
 
     case PM_MenuButtonIndicator:
         if (!opt)
-            ret = 12;
+            ret = qRound(QStyleHelper::dpiScaled(12, opt));
         else
-            ret = qMax(12, (opt->rect.height() - 4) / 3);
+            ret = qMax(qRound(QStyleHelper::dpiScaled(12, opt)), (opt->rect.height() - 4) / 3);
         break;
     default:
         ret =  QCommonStyle::pixelMetric(pm, opt, widget);

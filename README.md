@@ -133,6 +133,28 @@ cmake --build build-qt6 --target preview
 Switch styles live from the **Style:** drop-down in the toolbar. See
 `preview/README.md` for details.
 
+## High-DPI support
+
+Qt 6 scales high-DPI screens by default and Qt 5 needs `AA_EnableHighDpiScaling`
+(the preview enables it); in both cases the scale factor can be non-integer
+(e.g. 1.25, 1.5), which Qt 6 uses as-is by default (`PassThrough`).
+
+The styles scale their fixed pixel metrics with `QStyleHelper::dpiScaled()`
+(a `value * dpi / 96` helper shared by all plugins in `shared/qstylehelper_p.h`),
+so scroll bars, indicators, sliders and paddings grow with the font DPI just like
+Qt's own styles. `oldschool` already delegated most of its metrics to
+`QCommonStyle` (which is DPI-aware in both Qt 5.15 and Qt 6); the other styles
+now scale their own metrics explicitly.
+
+Two extra things the styles handle for crisp rendering at any scale factor:
+
+* Cached pixmaps (`dirtylooks`, `plastic`, `phase`) are created at the paint
+  device's device pixel ratio and tagged with `setDevicePixelRatio()`, and the
+  pixmap-cache keys include the dpr so 1x and 2x frames never share a cache
+  entry (`shared/qstylecache_p.h`).
+* Icons are fetched with `QIcon::pixmap(size, dpr, ...)` on Qt 6 so they resolve
+  to their high-resolution versions instead of being scaled up from 1x.
+
 ## License
 
 qtstyles is free software, released under the GNU Lesser General Public

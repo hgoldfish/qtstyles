@@ -28,6 +28,7 @@
 
 #include "winxpstyle.h"
 #include "qtstyles_palette.h"
+#include "qstylehelper_p.h"
 
 #include <QStyleOption>
 #include <QPainter>
@@ -776,17 +777,17 @@ int WinXPStyle::pixelMetric( PixelMetric metric, const QStyleOption* option, con
         case PM_ToolBarItemSpacing:
             return 0;
         case PM_ToolBarIconSize:
-            return 16;
+            return qRound( QStyleHelper::dpiScaled( 16, option ) );
 
         case PM_MenuButtonIndicator:
-            return 12;
+            return qRound( QStyleHelper::dpiScaled( 12, option ) );
 
         case PM_ScrollBarExtent:
-            return 17;
+            return qRound( QStyleHelper::dpiScaled( 17, option ) );
         case PM_SliderThickness:
-            return 22;
+            return qRound( QStyleHelper::dpiScaled( 22, option ) );
         case PM_SplitterWidth:
-            return 5;
+            return qRound( QStyleHelper::dpiScaled( 5, option ) );
         case PM_ComboBoxFrameWidth:
         case PM_SpinBoxFrameWidth:
             return 1;
@@ -806,14 +807,14 @@ int WinXPStyle::pixelMetric( PixelMetric metric, const QStyleOption* option, con
             // lower than the checkbox) and scales the checkbox by DPI, so a
             // fixed 13 keeps both indicators identical on every screen, in
             // line with the rest of this style's fixed-pixel metrics.
-            return 13;
+            return qRound( QStyleHelper::dpiScaled( 13, option ) );
 
         case PM_DockWidgetSeparatorExtent:
-            return 4;
+            return qRound( QStyleHelper::dpiScaled( 4, option ) );
         case PM_DockWidgetTitleBarButtonMargin:
-            return 4;
+            return qRound( QStyleHelper::dpiScaled( 4, option ) );
         case PM_DockWidgetTitleMargin:
-            return 3;
+            return qRound( QStyleHelper::dpiScaled( 3, option ) );
 
         case PM_LayoutVerticalSpacing:
             if ( qobject_cast<const QToolBox*>( widget ) )
@@ -832,7 +833,7 @@ int WinXPStyle::pixelMetric( PixelMetric metric, const QStyleOption* option, con
             // The Windows base value (24) pads the label of a vertical tab
             // further than the narrow strip needs; 12 keeps the tab width
             // compact on both orientations.
-            return 12;
+            return qRound( QStyleHelper::dpiScaled( 12, option ) );
 
         default:
             break;
@@ -1799,7 +1800,7 @@ void WinXPStyle::drawControl( ControlElement element, const QStyleOption* option
 
 #if QT_VERSION >= QT_VERSION_CHECK( 6, 0, 0 )
                     QPixmap pixmap = button->icon.pixmap( button->iconSize,
-                        painter->device()->devicePixelRatio(), mode, state );
+                        QStyleHelper::getDpr(painter), mode, state );
 #else
                     QPixmap pixmap = button->icon.pixmap( button->iconSize, mode, state );
 #endif
@@ -1870,7 +1871,12 @@ void WinXPStyle::drawControl( ControlElement element, const QStyleOption* option
                 if ( !styleHint( SH_UnderlineShortcut, option, widget ) )
                     flags |= Qt::TextHideMnemonic;
                 if ( !optionItem->icon.isNull() ) {
-                    QPixmap pixmap = optionItem->icon.pixmap( pixelMetric( PM_SmallIconSize, option, widget ), QIcon::Normal );
+                    const int smallIconSize = pixelMetric( PM_SmallIconSize, option, widget );
+                    QPixmap pixmap = optionItem->icon.pixmap( QSize( smallIconSize, smallIconSize ),
+#if QT_VERSION >= QT_VERSION_CHECK(6, 0, 0)
+                                                              QStyleHelper::getDpr(painter),
+#endif
+                                                              QIcon::Normal );
                     drawItemPixmap( painter, option->rect, flags, pixmap );
                 } else {
                     drawItemText( painter, option->rect, flags, option->palette, true, optionItem->text, QPalette::Text );
@@ -1922,8 +1928,14 @@ void WinXPStyle::drawControl( ControlElement element, const QStyleOption* option
                     else
                         mode = QIcon::Disabled;
                     QIcon::State state = optionItem->checked ? QIcon::On : QIcon::Off;
-                    QPixmap pixmap = optionItem->icon.pixmap( pixelMetric( PM_SmallIconSize, option, widget ), mode, state );
-                    QRect rect = pixmap.rect();
+                    const int smallIconSize = pixelMetric( PM_SmallIconSize, option, widget );
+                    QPixmap pixmap = optionItem->icon.pixmap( QSize( smallIconSize, smallIconSize ),
+#if QT_VERSION >= QT_VERSION_CHECK(6, 0, 0)
+                                                              QStyleHelper::getDpr(painter),
+#endif
+                                                              mode, state );
+                    QRect rect(0, 0, pixmap.width() / pixmap.devicePixelRatio(),
+                               pixmap.height() / pixmap.devicePixelRatio());
                     rect.moveCenter( checkRect.center() );
                     painter->drawPixmap( rect.topLeft(), pixmap );
                 } else if ( optionItem->checked ) {
@@ -2176,7 +2188,11 @@ void WinXPStyle::drawControl( ControlElement element, const QStyleOption* option
                 QRect textRect = button->rect;
                 if ( !button->icon.isNull() ) {
                     QIcon::Mode mode = ( button->state & QStyle::State_Enabled ) ? QIcon::Normal : QIcon::Disabled;
-                    QPixmap pixmap = button->icon.pixmap( button->iconSize, mode );
+                    QPixmap pixmap = button->icon.pixmap( button->iconSize,
+#if QT_VERSION >= QT_VERSION_CHECK(6, 0, 0)
+                                                          QStyleHelper::getDpr(painter),
+#endif
+                                                          mode );
                     drawItemPixmap( painter, button->rect, alignment, pixmap );
                     if ( button->direction == Qt::LeftToRight )
                         textRect.setLeft( textRect.left() + button->iconSize.width() + 4 );

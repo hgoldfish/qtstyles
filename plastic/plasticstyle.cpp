@@ -1439,9 +1439,11 @@ void PlasticStyle::drawPrimitive(PrimitiveElement element, const QStyleOption *o
     case PE_IndicatorToolBarHandle: {
         QPixmap cache;
         QRect rect = option->rect;
-        QString pixmapName = QStyleHelper::uniqueName(QLatin1String("toolbarhandle"), option, rect.size());
+        const qreal dpr = QStyleHelper::getDpr(painter);
+        QString pixmapName = QStyleHelper::uniqueName(QLatin1String("toolbarhandle"), option, rect.size(), dpr);
         if (!QPixmapCache::find(pixmapName, &cache)) {
-            cache = QPixmap(rect.size());
+            cache = QPixmap(QSize(qRound(rect.width() * dpr), qRound(rect.height() * dpr)));
+            cache.setDevicePixelRatio(dpr);
             cache.fill(Qt::transparent);
             QPainter cachePainter(&cache);
             QRect cacheRect(QPoint(0, 0), rect.size());
@@ -2658,18 +2660,20 @@ void PlasticStyle::drawControl(ControlElement element, const QStyleOption *optio
             painter->setPen(QPen());
 
             QString progressBarName = QStyleHelper::uniqueName(QLatin1String("progressBarContents"),
-                                                 option, rect.size());
+                                                 option, rect.size(), QStyleHelper::getDpr(painter));
             QPixmap cache;
             if (!QPixmapCache::find(progressBarName, &cache) && rect.height() > 7) {
                 QSize size = rect.size();
-                cache = QPixmap(QSize(size.width() - 6 + 30, size.height() - 6));
+                const qreal dpr = QStyleHelper::getDpr(painter);
+                cache = QPixmap(QSize(qRound((size.width() - 6 + 30) * dpr), qRound((size.height() - 6) * dpr)));
+                cache.setDevicePixelRatio(dpr);
                 cache.fill(Qt::white);
                 QPainter cachePainter(&cache);
-                QRect pixmapRect(0, 0, cache.width(), cache.height());
+                QRect pixmapRect(0, 0, size.width() - 6 + 30, size.height() - 6);
 
                 int leftEdge = 0;
                 bool flip = false;
-                while (leftEdge < cache.width() + 1) {
+                while (leftEdge < pixmapRect.width() + 1) {
                     QColor rectColor = option->palette.highlight().color();
                     QColor lineColor = option->palette.highlight().color();
                     if (flip) {
@@ -2717,12 +2721,14 @@ void PlasticStyle::drawControl(ControlElement element, const QStyleOption *optio
         // Draws the header in tables.
         if (const QStyleOptionHeader *header = qstyleoption_cast<const QStyleOptionHeader *>(option)) {
             QPixmap cache;
-            QString pixmapName = QStyleHelper::uniqueName(QLatin1String("headersection"), option, option->rect.size());
+            const qreal dpr = QStyleHelper::getDpr(painter);
+            QString pixmapName = QStyleHelper::uniqueName(QLatin1String("headersection"), option, option->rect.size(), dpr);
             pixmapName += QString::number(- int(header->position));
             pixmapName += QString::number(- int(header->orientation));
 
             if (!QPixmapCache::find(pixmapName, &cache)) {
-                cache = QPixmap(option->rect.size());
+                cache = QPixmap(QSize(qRound(option->rect.width() * dpr), qRound(option->rect.height() * dpr)));
+                cache.setDevicePixelRatio(dpr);
                 cache.fill(Qt::white);
                 QRect pixmapRect(0, 0, option->rect.width(), option->rect.height());
                 QPainter cachePainter(&cache);
@@ -2871,12 +2877,21 @@ void PlasticStyle::drawControl(ControlElement element, const QStyleOption *optio
                 if (act && !dis)
                     mode = QIcon::Active;
                 QPixmap pixmap;
+#if QT_VERSION >= QT_VERSION_CHECK(6, 0, 0)
+                const qreal dpr = QStyleHelper::getDpr(painter);
+                const int smallIconSize = pixelMetric(PM_SmallIconSize, option, widget);
+                if (checked)
+                    pixmap = menuItem->icon.pixmap(QSize(smallIconSize, smallIconSize), dpr, mode, QIcon::On);
+                else
+                    pixmap = menuItem->icon.pixmap(QSize(smallIconSize, smallIconSize), dpr, mode);
+#else
                 if (checked)
                     pixmap = menuItem->icon.pixmap(pixelMetric(PM_SmallIconSize, option, widget), mode, QIcon::On);
                 else
                     pixmap = menuItem->icon.pixmap(pixelMetric(PM_SmallIconSize, option, widget), mode);
-                int pixw = pixmap.width();
-                int pixh = pixmap.height();
+#endif
+                int pixw = pixmap.width() / pixmap.devicePixelRatio();
+                int pixh = pixmap.height() / pixmap.devicePixelRatio();
 
                 QRect pmr(0, 0, pixw, pixh);
                 pmr.moveCenter(vCheckRect.center());
@@ -2964,9 +2979,11 @@ void PlasticStyle::drawControl(ControlElement element, const QStyleOption *optio
         // Draws a menu bar item; File, Edit, Help etc..
         if ((option->state & State_Selected)) {
             QPixmap cache;
-            QString pixmapName = QStyleHelper::uniqueName(QLatin1String("menubaritem"), option, option->rect.size());
+            const qreal dpr = QStyleHelper::getDpr(painter);
+            QString pixmapName = QStyleHelper::uniqueName(QLatin1String("menubaritem"), option, option->rect.size(), dpr);
             if (!QPixmapCache::find(pixmapName, &cache)) {
-                cache = QPixmap(option->rect.size());
+                cache = QPixmap(QSize(qRound(option->rect.width() * dpr), qRound(option->rect.height() * dpr)));
+                cache.setDevicePixelRatio(dpr);
                 cache.fill(Qt::white);
                 QRect pixmapRect(0, 0, option->rect.width(), option->rect.height());
                 QPainter cachePainter(&cache);
@@ -3318,12 +3335,14 @@ void PlasticStyle::drawControl(ControlElement element, const QStyleOption *optio
             bool reverse = scrollBar->direction == Qt::RightToLeft;
             bool sunken = scrollBar->state & State_Sunken;
 
-            QString addLinePixmapName = QStyleHelper::uniqueName(QLatin1String("scrollbar_addline"), option, option->rect.size());
+            const qreal dpr = QStyleHelper::getDpr(painter);
+            QString addLinePixmapName = QStyleHelper::uniqueName(QLatin1String("scrollbar_addline"), option, option->rect.size(), dpr);
             QPixmap cache;
             if (!QPixmapCache::find(addLinePixmapName, &cache)) {
-                cache = QPixmap(option->rect.size());
+                cache = QPixmap(QSize(qRound(option->rect.width() * dpr), qRound(option->rect.height() * dpr)));
+                cache.setDevicePixelRatio(dpr);
                 cache.fill(Qt::white);
-                QRect pixmapRect(0, 0, cache.width(), cache.height());
+                QRect pixmapRect(0, 0, option->rect.width(), option->rect.height());
                 QPainter addLinePainter(&cache);
                 addLinePainter.fillRect(pixmapRect, option->palette.window());
 
@@ -3390,7 +3409,8 @@ void PlasticStyle::drawControl(ControlElement element, const QStyleOption *optio
             bool sunken = scrollBar->state & State_Sunken;
             bool horizontal = scrollBar->orientation == Qt::Horizontal;
 
-            QString groovePixmapName = QStyleHelper::uniqueName(QLatin1String("scrollbar_groove"), option, option->rect.size());
+            const qreal dpr = QStyleHelper::getDpr(painter);
+            QString groovePixmapName = QStyleHelper::uniqueName(QLatin1String("scrollbar_groove"), option, option->rect.size(), dpr);
             if (sunken)
                 groovePixmapName += QLatin1String("-sunken");
             if (element == CE_ScrollBarAddPage)
@@ -3398,7 +3418,8 @@ void PlasticStyle::drawControl(ControlElement element, const QStyleOption *optio
 
             QPixmap cache;
             if (!QPixmapCache::find(groovePixmapName, &cache)) {
-                cache = QPixmap(option->rect.size());
+                cache = QPixmap(QSize(qRound(option->rect.width() * dpr), qRound(option->rect.height() * dpr)));
+                cache.setDevicePixelRatio(dpr);
                 cache.fill(option->palette.window().color());
                 QPainter groovePainter(&cache);
                 QRect pixmapRect = QRect(0, 0, option->rect.width(), option->rect.height());
@@ -3449,12 +3470,14 @@ void PlasticStyle::drawControl(ControlElement element, const QStyleOption *optio
                 button2.setRect(scrollBarSubLine.left(), scrollBarSubLine.bottom() - (scrollBarExtent - 1), scrollBarSubLine.width(), scrollBarExtent);
             }
 
-            QString subLinePixmapName = QStyleHelper::uniqueName(QLatin1String("scrollbar_subline"), option, button1.size());
+            const qreal dpr = QStyleHelper::getDpr(painter);
+            QString subLinePixmapName = QStyleHelper::uniqueName(QLatin1String("scrollbar_subline"), option, button1.size(), dpr);
             QPixmap cache;
             if (!QPixmapCache::find(subLinePixmapName, &cache)) {
-                cache = QPixmap(button1.size());
+                cache = QPixmap(QSize(qRound(button1.width() * dpr), qRound(button1.height() * dpr)));
+                cache.setDevicePixelRatio(dpr);
                 cache.fill(Qt::white);
-                QRect pixmapRect(0, 0, cache.width(), cache.height());
+                QRect pixmapRect(0, 0, button1.width(), button1.height());
                 QPainter subLinePainter(&cache);
                 subLinePainter.fillRect(pixmapRect, option->palette.window());
 
@@ -3524,15 +3547,17 @@ void PlasticStyle::drawControl(ControlElement element, const QStyleOption *optio
 
             // The slider
             if (option->rect.isValid()) {
-                QString sliderPixmapName = QStyleHelper::uniqueName(QLatin1String("scrollbar_slider"), option, option->rect.size());
+                const qreal dpr = QStyleHelper::getDpr(painter);
+                QString sliderPixmapName = QStyleHelper::uniqueName(QLatin1String("scrollbar_slider"), option, option->rect.size(), dpr);
                 if (horizontal)
                     sliderPixmapName += QLatin1String("-horizontal");
 
                 QPixmap cache;
                 if (!QPixmapCache::find(sliderPixmapName, &cache)) {
-                    cache = QPixmap(option->rect.size());
+                    cache = QPixmap(QSize(qRound(option->rect.width() * dpr), qRound(option->rect.height() * dpr)));
+                    cache.setDevicePixelRatio(dpr);
                     cache.fill(Qt::white);
-                    QRect pixmapRect(0, 0, cache.width(), cache.height());
+                    QRect pixmapRect(0, 0, option->rect.width(), option->rect.height());
                     QPainter sliderPainter(&cache);
                     bool sunken = (scrollBar->state & State_Sunken);
 
@@ -3742,14 +3767,16 @@ void PlasticStyle::drawComplexControl(ComplexControl control, const QStyleOption
             }
 
             if ((option->subControls & SC_SliderHandle) && handle.isValid()) {
-                QString handlePixmapName = QStyleHelper::uniqueName(QLatin1String("slider_handle"), option, handle.size());
+                const qreal dpr = QStyleHelper::getDpr(painter);
+                QString handlePixmapName = QStyleHelper::uniqueName(QLatin1String("slider_handle"), option, handle.size(), dpr);
                 if (ticksAbove && !ticksBelow)
                     handlePixmapName += QLatin1String("-flipped");
                 if ((option->activeSubControls & SC_SliderHandle) && (option->state & State_Sunken))
                     handlePixmapName += QLatin1String("-sunken");
 
                 if (!QPixmapCache::find(handlePixmapName, &cache)) {
-                    cache = QPixmap(handle.size());
+                    cache = QPixmap(QSize(qRound(handle.width() * dpr), qRound(handle.height() * dpr)));
+                    cache.setDevicePixelRatio(dpr);
                     cache.fill(Qt::transparent);
                     QRect pixmapRect(0, 0, handle.width(), handle.height());
                     QPainter handlePainter(&cache);
@@ -5400,18 +5427,18 @@ int PlasticStyle::pixelMetric(PixelMetric metric, const QStyleOption *option, co
         break;
 #ifndef QT_NO_SLIDER
     case PM_SliderThickness:
-        ret = 15;
+        ret = qRound(QStyleHelper::dpiScaled(15, option));
         break;
     case PM_SliderLength:
     case PM_SliderControlThickness:
-        ret = 11;
+        ret = qRound(QStyleHelper::dpiScaled(11, option));
         break;
     case PM_SliderTickmarkOffset:
-        ret = 5;
+        ret = qRound(QStyleHelper::dpiScaled(5, option));
         break;
     case PM_SliderSpaceAvailable:
         if (const QStyleOptionSlider *slider = qstyleoption_cast<const QStyleOptionSlider *>(option)) {
-            int size = 15;
+            int size = qRound(QStyleHelper::dpiScaled(15, option));
             if (slider->tickPosition & QSlider::TicksBelow)
                 ++size;
             if (slider->tickPosition & QSlider::TicksAbove)
@@ -5421,19 +5448,19 @@ int PlasticStyle::pixelMetric(PixelMetric metric, const QStyleOption *option, co
         break;
 #endif // QT_NO_SLIDER
     case PM_ScrollBarExtent:
-        ret = 16;
+        ret = qRound(QStyleHelper::dpiScaled(16, option));
         break;
     case PM_ScrollBarSliderMin:
-        ret = 26;
+        ret = qRound(QStyleHelper::dpiScaled(26, option));
         break;
     case PM_ProgressBarChunkWidth:
         ret = 1;
         break;
     case PM_MenuBarItemSpacing:
-        ret = 3;
+        ret = qRound(QStyleHelper::dpiScaled(3, option));
         break;
     case PM_MenuBarVMargin:
-        ret = 2;
+        ret = qRound(QStyleHelper::dpiScaled(2, option));
         break;
     case PM_MenuBarHMargin:
         ret = 0;
@@ -5442,10 +5469,10 @@ int PlasticStyle::pixelMetric(PixelMetric metric, const QStyleOption *option, co
         ret = 1;
         break;
     case PM_ToolBarHandleExtent:
-        ret = 9;
+        ret = qRound(QStyleHelper::dpiScaled(9, option));
         break;
     case PM_ToolBarSeparatorExtent:
-        ret = 2;
+        ret = qRound(QStyleHelper::dpiScaled(2, option));
         break;
     case PM_ToolBarItemSpacing:
         ret = 1;
@@ -5457,13 +5484,13 @@ int PlasticStyle::pixelMetric(PixelMetric metric, const QStyleOption *option, co
         ret = 2;
         break;
     case PM_SplitterWidth:
-        ret = 6;
+        ret = qRound(QStyleHelper::dpiScaled(6, option));
         break;
     case PM_DockWidgetSeparatorExtent:
-        ret = 6;
+        ret = qRound(QStyleHelper::dpiScaled(6, option));
         break;
     case PM_DockWidgetHandleExtent:
-        ret = 20;
+        ret = qRound(QStyleHelper::dpiScaled(20, option));
         break;
     case PM_DefaultFrameWidth:
 #ifndef QT_NO_MENU
@@ -5475,16 +5502,17 @@ int PlasticStyle::pixelMetric(PixelMetric metric, const QStyleOption *option, co
         ret = 2;
         break;
     case PM_MdiSubWindowFrameWidth:
-        ret = 4;
+        ret = qRound(QStyleHelper::dpiScaled(4, option));
         break;
     case PM_TitleBarHeight:
         ret = qMax(widget ? widget->fontMetrics().height() :
-                   (option ? option->fontMetrics.height() : 0), 30);
+                   (option ? option->fontMetrics.height() : 0),
+                   qRound(QStyleHelper::dpiScaled(30, option)));
         break;
     case PM_MaximumDragDistance:
         return -1;
     case PM_DockWidgetTitleMargin:
-        return 2;
+        return qRound(QStyleHelper::dpiScaled(2, option));
     case PM_LayoutHorizontalSpacing:
     case PM_LayoutVerticalSpacing:
         return -1;  // rely on layoutHorizontalSpacing()
@@ -5501,9 +5529,9 @@ int PlasticStyle::pixelMetric(PixelMetric metric, const QStyleOption *option, co
             }
 
             if (isWindow) {
-                ret = 11;
+                ret = qRound(QStyleHelper::dpiScaled(11, option));
             } else {
-                ret = 9;
+                ret = qRound(QStyleHelper::dpiScaled(9, option));
             }
         }
     default:

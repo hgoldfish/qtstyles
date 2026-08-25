@@ -17,6 +17,7 @@ QT = core gui widgets
 
 # Shared style helpers (qtstyles_palette.h) live in ../lib.
 INCLUDEPATH += $$PWD/../lib
+INCLUDEPATH += $$PWD/../shared
 
 HEADERS = winxpstyle.h
 SOURCES = winxpstyle.cpp

@@ -21,6 +21,7 @@
 
 #include "keramikstyle.h"
 #include "qtstyles_palette.h"
+#include "qstylehelper_p.h"
 
 #include <QtWidgets/qapplication.h>
 #include <QtWidgets/qcombobox.h>
@@ -1142,8 +1143,14 @@ void KeramikStyle::drawMenuItem(QPainter *p, const QStyleOptionMenuItem *mi) con
     if (!mi->icon.isNull()) {
         const QIcon::Mode mode = !enabled ? QIcon::Disabled
                                 : selected ? QIcon::Active : QIcon::Normal;
-        const QPixmap pm = mi->icon.pixmap(16, mode);
-        const QRect iconRect(pm.rect());
+        const QPixmap pm = mi->icon.pixmap(QSize(16, 16),
+#if QT_VERSION >= QT_VERSION_CHECK(6, 0, 0)
+                                           QStyleHelper::getDpr(p),
+#endif
+                                           mode);
+        const QSize iconSize(pm.width() / pm.devicePixelRatio(),
+                             pm.height() / pm.devicePixelRatio());
+        const QRect iconRect(QPoint(0, 0), iconSize);
         QRect target(checkRect.center().x() - iconRect.width() / 2,
                      checkRect.center().y() - iconRect.height() / 2,
                      iconRect.width(), iconRect.height());
@@ -1569,7 +1576,7 @@ int KeramikStyle::pixelMetric(PixelMetric pm, const QStyleOption *opt,
 {
     switch (pm) {
     case PM_ButtonMargin:
-        return 4;
+        return qRound(QStyleHelper::dpiScaled(4, opt));
     case PM_ButtonShiftHorizontal:
         return 0;
     case PM_ButtonShiftVertical:
@@ -1579,24 +1586,24 @@ int KeramikStyle::pixelMetric(PixelMetric pm, const QStyleOption *opt,
     case PM_DefaultFrameWidth:
         return 1;
     case PM_ScrollBarExtent:
-        return 15;
+        return qRound(QStyleHelper::dpiScaled(15, opt));
     case PM_ScrollBarSliderMin:
-        return 24;
+        return qRound(QStyleHelper::dpiScaled(24, opt));
     case PM_SliderThickness:
-        return 21;
+        return qRound(QStyleHelper::dpiScaled(21, opt));
     case PM_SliderControlThickness:
-        return 9;
+        return qRound(QStyleHelper::dpiScaled(9, opt));
     case PM_SliderLength:
         // The original theme uses a compact thumb, about 12px long.
-        return 12;
+        return qRound(QStyleHelper::dpiScaled(12, opt));
     case PM_IndicatorWidth:
     case PM_IndicatorHeight:
-        return 13;
+        return qRound(QStyleHelper::dpiScaled(13, opt));
     case PM_ExclusiveIndicatorWidth:
     case PM_ExclusiveIndicatorHeight:
-        return 13;
+        return qRound(QStyleHelper::dpiScaled(13, opt));
     case PM_MenuButtonIndicator:
-        return 13;
+        return qRound(QStyleHelper::dpiScaled(13, opt));
     case PM_MenuPanelWidth:
         return 1;
     case PM_MenuBarItemSpacing:
@@ -1608,19 +1615,19 @@ int KeramikStyle::pixelMetric(PixelMetric pm, const QStyleOption *opt,
         // the top edge of PE_FrameTabWidget, so the pane must not overlap it.
         return 0;
     case PM_TabBarTabHSpace:
-        return 16;
+        return qRound(QStyleHelper::dpiScaled(16, opt));
     case PM_TabBarTabVSpace:
-        return 12;
+        return qRound(QStyleHelper::dpiScaled(12, opt));
     case PM_TabBarBaseHeight:
         return 1;
     case PM_DockWidgetSeparatorExtent:
-        return 4;
+        return qRound(QStyleHelper::dpiScaled(4, opt));
     case PM_ProgressBarChunkWidth:
-        return 4;
+        return qRound(QStyleHelper::dpiScaled(4, opt));
     case PM_TitleBarHeight:
-        return 22;
+        return qRound(QStyleHelper::dpiScaled(22, opt));
     case PM_SplitterWidth:
-        return 6;
+        return qRound(QStyleHelper::dpiScaled(6, opt));
     default:
         break;
     }

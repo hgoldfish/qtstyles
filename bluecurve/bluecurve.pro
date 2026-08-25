@@ -15,8 +15,10 @@ lessThan(QT_MAJOR_VERSION, 6) {
 
 QT = core gui widgets
 
-# Shared style helpers (qtstyles_palette.h) live in ../lib.
+# Shared style helpers (qtstyles_palette.h) live in ../lib; the HiDPI
+# helpers (qstylehelper_p.h) live in ../shared.
 INCLUDEPATH += $$PWD/../lib
+INCLUDEPATH += $$PWD/../shared
 
 HEADERS = bluecurvestyle.h
 SOURCES = bluecurvestyle.cpp

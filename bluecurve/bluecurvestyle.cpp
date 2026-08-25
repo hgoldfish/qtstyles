@@ -21,6 +21,7 @@
 
 #include "bluecurvestyle.h"
 #include "qtstyles_palette.h"
+#include "qstylehelper_p.h"
 
 #include <QtWidgets/qapplication.h>
 #include <QtWidgets/qabstractbutton.h>
@@ -873,7 +874,11 @@ void BluecurveStyle::drawControl(ControlElement element, const QStyleOption *opt
         if (!button->icon.isNull()) {
             const QIcon::Mode mode = QIcon::Normal;
             const QIcon::State state = (button->state & State_On) ? QIcon::On : QIcon::Off;
-            QPixmap pixmap = button->icon.pixmap(button->iconSize, mode, state);
+            QPixmap pixmap = button->icon.pixmap(button->iconSize,
+#if QT_VERSION >= QT_VERSION_CHECK(6, 0, 0)
+                                                 QStyleHelper::getDpr(p),
+#endif
+                                                 mode, state);
             const int pw = pixmap.width() / pixmap.devicePixelRatio();
             const int ph = pixmap.height() / pixmap.devicePixelRatio();
             const int spacing = 4;
@@ -933,6 +938,9 @@ void BluecurveStyle::drawControl(ControlElement element, const QStyleOption *opt
             const QIcon::State state = (toolbutton->state & State_On) ? QIcon::On : QIcon::Off;
             const QIcon::Mode mode = (toolbutton->state & State_Enabled) ? QIcon::Normal : QIcon::Disabled;
             pm = toolbutton->icon.pixmap(toolbutton->rect.size().boundedTo(toolbutton->iconSize),
+#if QT_VERSION >= QT_VERSION_CHECK(6, 0, 0)
+                                         QStyleHelper::getDpr(p),
+#endif
                                          mode, state);
             pmSize = pm.size() / pm.devicePixelRatio();
         } else {
@@ -1092,7 +1100,11 @@ void BluecurveStyle::drawControl(ControlElement element, const QStyleOption *opt
             iconRect.moveTopLeft(QPoint(textRect.x() + 2,
                                         textRect.center().y() - iconSize.height() / 2));
             const QIcon::State state = (tab->state & State_Selected) ? QIcon::On : QIcon::Off;
-            const QPixmap tabIcon = tab->icon.pixmap(iconSize, QIcon::Normal, state);
+            const QPixmap tabIcon = tab->icon.pixmap(iconSize,
+#if QT_VERSION >= QT_VERSION_CHECK(6, 0, 0)
+                                                     QStyleHelper::getDpr(p),
+#endif
+                                                     QIcon::Normal, state);
             p->drawPixmap(iconRect, tabIcon);
             textRect.setLeft(textRect.left() + iconSize.width() + 4);
         }
@@ -1162,7 +1174,11 @@ void BluecurveStyle::drawControl(ControlElement element, const QStyleOption *opt
                 buttonOpt.palette = opt->palette;
                 drawPrimitive(PE_PanelButtonCommand, &buttonOpt, p, widget);
             }
-            const QPixmap pixmap = miOpt->icon.pixmap(pixelMetric(PM_SmallIconSize, opt, widget),
+            const int smallIconSize = pixelMetric(PM_SmallIconSize, opt, widget);
+            const QPixmap pixmap = miOpt->icon.pixmap(QSize(smallIconSize, smallIconSize),
+#if QT_VERSION >= QT_VERSION_CHECK(6, 0, 0)
+                                                      QStyleHelper::getDpr(p),
+#endif
                                                       QIcon::Normal, checked ? QIcon::On : QIcon::Off);
             QRect pmr(QPoint(0, 0), pixmap.size() / pixmap.devicePixelRatio());
             pmr.moveCenter(cr.center());
@@ -1911,13 +1927,14 @@ int BluecurveStyle::pixelMetric(PixelMetric metric, const QStyleOption *opt,
     int ret;
     switch (metric) {
     case PM_ButtonMargin:
-        ret = 10;
+        ret = qRound(QStyleHelper::dpiScaled(10, opt));
         break;
     case PM_ButtonDefaultIndicator:
         ret = 0;
         break;
     case PM_MenuButtonIndicator:
-        ret = widget ? qMax(12, (widget->height() - 4) / 3) : 12;
+        ret = widget ? qMax(qRound(QStyleHelper::dpiScaled(12, opt)), (widget->height() - 4) / 3)
+                     : qRound(QStyleHelper::dpiScaled(12, opt));
         break;
     case PM_ButtonShiftHorizontal:
     case PM_ButtonShiftVertical:
@@ -1930,15 +1947,15 @@ int BluecurveStyle::pixelMetric(PixelMetric metric, const QStyleOption *opt,
         ret = -1;
         break;
     case PM_ScrollBarExtent:
-        ret = 15;
+        ret = qRound(QStyleHelper::dpiScaled(15, opt));
         break;
     case PM_ScrollBarSliderMin:
-        ret = 31;
+        ret = qRound(QStyleHelper::dpiScaled(31, opt));
         break;
     case PM_SliderControlThickness: {
         const QStyleOptionSlider *sl = qstyleoption_cast<const QStyleOptionSlider *>(opt);
         if (!sl) {
-            ret = 16;
+            ret = qRound(QStyleHelper::dpiScaled(16, opt));
             break;
         }
         int space = (sl->orientation == Qt::Horizontal) ? sl->rect.height() : sl->rect.width();
@@ -1952,7 +1969,7 @@ int BluecurveStyle::pixelMetric(PixelMetric metric, const QStyleOption *opt,
             ret = space;
             break;
         }
-        int thick = 6;
+        int thick = qRound(QStyleHelper::dpiScaled(6, opt));
         space -= thick;
         if (space > 0)
             thick += (space * 2) / (n + 2);
@@ -1960,7 +1977,7 @@ int BluecurveStyle::pixelMetric(PixelMetric metric, const QStyleOption *opt,
         break;
     }
     case PM_SliderLength:
-        ret = 31;
+        ret = qRound(QStyleHelper::dpiScaled(31, opt));
         if (widget && widget->inherits("QSlider")) {
             const QSlider *slider = static_cast<const QSlider *>(widget);
             if (slider->orientation() == Qt::Horizontal) {
@@ -1973,10 +1990,10 @@ int BluecurveStyle::pixelMetric(PixelMetric metric, const QStyleOption *opt,
         break;
     case PM_DockWidgetSeparatorExtent:
     case PM_SplitterWidth:
-        ret = 6;
+        ret = qRound(QStyleHelper::dpiScaled(6, opt));
         break;
     case PM_DockWidgetHandleExtent:
-        ret = 10;
+        ret = qRound(QStyleHelper::dpiScaled(10, opt));
         break;
     case PM_MenuBarPanelWidth:
         ret = 1;
@@ -1988,10 +2005,10 @@ int BluecurveStyle::pixelMetric(PixelMetric metric, const QStyleOption *opt,
         ret = 1;
         break;
     case PM_TabBarTabHSpace:
-        ret = 11;
+        ret = qRound(QStyleHelper::dpiScaled(11, opt));
         break;
     case PM_TabBarTabVSpace:
-        ret = 13;
+        ret = qRound(QStyleHelper::dpiScaled(13, opt));
         break;
     case PM_TabBarBaseHeight:
         ret = 0;
@@ -2003,25 +2020,25 @@ int BluecurveStyle::pixelMetric(PixelMetric metric, const QStyleOption *opt,
         ret = 0;
         break;
     case PM_ProgressBarChunkWidth:
-        ret = 2;
+        ret = qRound(QStyleHelper::dpiScaled(2, opt));
         break;
     case PM_IndicatorWidth:
     case PM_IndicatorHeight:
     case PM_ExclusiveIndicatorWidth:
     case PM_ExclusiveIndicatorHeight:
-        ret = 13;
+        ret = qRound(QStyleHelper::dpiScaled(13, opt));
         break;
     case PM_MenuPanelWidth:
-        ret = 3;
+        ret = qRound(QStyleHelper::dpiScaled(3, opt));
         break;
     case PM_MenuVMargin:
         ret = 1;
         break;
     case PM_HeaderMarkSize:
-        ret = 32;
+        ret = qRound(QStyleHelper::dpiScaled(32, opt));
         break;
     case PM_ButtonIconSize:
-        ret = 20;
+        ret = qRound(QStyleHelper::dpiScaled(20, opt));
         break;
     case PM_SubMenuOverlap:
         ret = 2;

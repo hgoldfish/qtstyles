@@ -1635,7 +1635,8 @@ void DirtylooksStyle::drawControl(ControlElement element, const QStyleOption *op
         // Draws the header in tables.
         if (const QStyleOptionHeader *header = qstyleoption_cast<const QStyleOptionHeader *>(option)) {
             QPixmap cache;
-            QString pixmapName = QStyleHelper::uniqueName(QLatin1String("headersection"), option, option->rect.size());
+            const qreal dpr = QStyleHelper::getDpr(painter);
+            QString pixmapName = QStyleHelper::uniqueName(QLatin1String("headersection"), option, option->rect.size(), dpr);
             pixmapName += QString::number(- int(header->position));
             pixmapName += QString::number(- int(header->orientation));
             QRect r = option->rect;
@@ -1655,7 +1656,8 @@ void DirtylooksStyle::drawControl(ControlElement element, const QStyleOption *op
             painter->fillRect(r, gradient);
 
             if (!QPixmapCache::find(pixmapName, &cache)) {
-                cache = QPixmap(r.size());
+                cache = QPixmap(QSize(qRound(r.width() * dpr), qRound(r.height() * dpr)));
+                cache.setDevicePixelRatio(dpr);
                 cache.fill(Qt::transparent);
                 QRect pixmapRect(0, 0, r.width(), r.height());
                 QPainter cachePainter(&cache);
@@ -1973,10 +1975,18 @@ void DirtylooksStyle::drawControl(ControlElement element, const QStyleOption *op
                 if (const QComboBox *combo = qobject_cast<const QComboBox*>(widget))
                     iconSize = combo->iconSize();
 #endif // QT_NO_COMBOBOX
+#if QT_VERSION >= QT_VERSION_CHECK(6, 0, 0)
+                const qreal dpr = QStyleHelper::getDpr(painter);
+                if (checked)
+                    pixmap = menuItem->icon.pixmap(iconSize, dpr, mode, QIcon::On);
+                else
+                    pixmap = menuItem->icon.pixmap(iconSize, dpr, mode);
+#else
                 if (checked)
                     pixmap = menuItem->icon.pixmap(iconSize, mode, QIcon::On);
                 else
                     pixmap = menuItem->icon.pixmap(iconSize, mode);
+#endif
 
                 int pixw = pixmap.width() / pixmap.devicePixelRatio();
                 int pixh = pixmap.height() / pixmap.devicePixelRatio();
@@ -2100,7 +2110,11 @@ void DirtylooksStyle::drawControl(ControlElement element, const QStyleOption *op
                 if (button->state & State_On)
                     state = QIcon::On;
 
-                QPixmap pixmap = button->icon.pixmap(button->iconSize, mode, state);
+                QPixmap pixmap = button->icon.pixmap(button->iconSize,
+#if QT_VERSION >= QT_VERSION_CHECK(6, 0, 0)
+                                                     QStyleHelper::getDpr(painter),
+#endif
+                                                     mode, state);
                 int pixw = pixmap.width() / pixmap.devicePixelRatio();
                 int w = pixw;
                 int h = pixmap.height() / pixmap.devicePixelRatio();
@@ -2425,9 +2439,11 @@ void DirtylooksStyle::drawComplexControl(ComplexControl control, const QStyleOpt
     case CC_SpinBox:
         if (const QStyleOptionSpinBox *spinBox = qstyleoption_cast<const QStyleOptionSpinBox *>(option)) {
             QPixmap cache;
-            QString pixmapName = QStyleHelper::uniqueName(QLatin1String("spinbox"), spinBox, spinBox->rect.size());
+            const qreal dpr = QStyleHelper::getDpr(painter);
+            QString pixmapName = QStyleHelper::uniqueName(QLatin1String("spinbox"), spinBox, spinBox->rect.size(), dpr);
             if (!QPixmapCache::find(pixmapName, &cache)) {
-                cache = QPixmap(spinBox->rect.size());
+                cache = QPixmap(QSize(qRound(spinBox->rect.width() * dpr), qRound(spinBox->rect.height() * dpr)));
+                cache.setDevicePixelRatio(dpr);
                 cache.fill(Qt::transparent);
                 QRect pixmapRect(0, 0, spinBox->rect.width(), spinBox->rect.height());
                 QPainter cachePainter(&cache);
@@ -3189,7 +3205,8 @@ void DirtylooksStyle::drawComplexControl(ComplexControl control, const QStyleOpt
             bool isEnabled = (comboBox->state & State_Enabled);
             bool focus = isEnabled && (comboBox->state & State_HasFocus);
             QPixmap cache;
-            QString pixmapName = QStyleHelper::uniqueName(QLatin1String("combobox"), option, comboBox->rect.size());
+            const qreal dpr = QStyleHelper::getDpr(painter);
+            QString pixmapName = QStyleHelper::uniqueName(QLatin1String("combobox"), option, comboBox->rect.size(), dpr);
             if (sunken)
                 pixmapName += QLatin1String("-sunken");
             if (comboBox->editable)
@@ -3198,7 +3215,8 @@ void DirtylooksStyle::drawComplexControl(ComplexControl control, const QStyleOpt
                 pixmapName += QLatin1String("-enabled");
 
             if (!QPixmapCache::find(pixmapName, &cache)) {
-                cache = QPixmap(comboBox->rect.size());
+                cache = QPixmap(QSize(qRound(comboBox->rect.width() * dpr), qRound(comboBox->rect.height() * dpr)));
+                cache.setDevicePixelRatio(dpr);
                 cache.fill(Qt::transparent);
                 QPainter cachePainter(&cache);
                 QRect pixmapRect(0, 0, comboBox->rect.width(), comboBox->rect.height());
@@ -3401,6 +3419,7 @@ void DirtylooksStyle::drawComplexControl(ComplexControl control, const QStyleOpt
             bool ticksBelow = slider->tickPosition & QSlider::TicksBelow;
             QColor activeHighlight = option->palette.color(QPalette::Normal, QPalette::Highlight);
             QPixmap cache;
+            const qreal dpr = QStyleHelper::getDpr(painter);
 
             QBrush oldBrush = painter->brush();
             QPen oldPen = painter->pen();
@@ -3411,12 +3430,13 @@ void DirtylooksStyle::drawComplexControl(ComplexControl control, const QStyleOpt
             highlightAlpha.setAlpha(80);
 
             if ((option->subControls & SC_SliderGroove) && groove.isValid()) {
-                QString groovePixmapName = QStyleHelper::uniqueName(QLatin1String("slider_groove"), option, groove.size());
+                QString groovePixmapName = QStyleHelper::uniqueName(QLatin1String("slider_groove"), option, groove.size(), dpr);
                 QRect pixmapRect(0, 0, groove.width(), groove.height());
 
                 // draw background groove
                 if (!QPixmapCache::find(groovePixmapName, &cache)) {
-                    cache = QPixmap(pixmapRect.size());
+                    cache = QPixmap(QSize(qRound(groove.width() * dpr), qRound(groove.height() * dpr)));
+                    cache.setDevicePixelRatio(dpr);
                     cache.fill(Qt::transparent);
                     QPainter groovePainter(&cache);
 
@@ -3450,7 +3470,8 @@ void DirtylooksStyle::drawComplexControl(ComplexControl control, const QStyleOpt
                 QRect clipRect;
                 groovePixmapName += QLatin1String("_blue");
                 if (!QPixmapCache::find(groovePixmapName, &cache)) {
-                    cache = QPixmap(pixmapRect.size());
+                    cache = QPixmap(QSize(qRound(groove.width() * dpr), qRound(groove.height() * dpr)));
+                    cache.setDevicePixelRatio(dpr);
                     cache.fill(Qt::transparent);
                     QPainter groovePainter(&cache);
                     QLinearGradient gradient;
@@ -3489,9 +3510,10 @@ void DirtylooksStyle::drawComplexControl(ComplexControl control, const QStyleOpt
 
             // draw handle
             if ((option->subControls & SC_SliderHandle) ) {
-                QString handlePixmapName = QStyleHelper::uniqueName(QLatin1String("slider_handle"), option, handle.size());
+                QString handlePixmapName = QStyleHelper::uniqueName(QLatin1String("slider_handle"), option, handle.size(), dpr);
                 if (!QPixmapCache::find(handlePixmapName, &cache)) {
-                    cache = QPixmap(handle.size());
+                    cache = QPixmap(QSize(qRound(handle.width() * dpr), qRound(handle.height() * dpr)));
+                    cache.setDevicePixelRatio(dpr);
                     cache.fill(Qt::transparent);
                     QRect pixmapRect(0, 0, handle.width(), handle.height());
                     QPainter handlePainter(&cache);
@@ -3673,31 +3695,31 @@ int DirtylooksStyle::pixelMetric(PixelMetric metric, const QStyleOption *option,
         ret = 0;
         break;
     case PM_MessageBoxIconSize:
-        ret = 48;
+        ret = qRound(dpiScaled(48, option));
         break;
     case PM_ListViewIconSize:
-        ret = 24;
+        ret = qRound(dpiScaled(24, option));
         break;
     case PM_SplitterWidth:
-        ret = 6;
+        ret = qRound(dpiScaled(6, option));
         break;
     case PM_ScrollBarSliderMin:
-        ret = 26;
+        ret = qRound(dpiScaled(26, option));
         break;
     case PM_MenuPanelWidth: //menu framewidth
-        ret = 2;
+        ret = qRound(dpiScaled(2, option));
         break;
     case PM_TitleBarHeight:
-        ret = 24;
+        ret = qRound(dpiScaled(24, option));
         break;
     case PM_ScrollBarExtent:
-        ret = 15;
+        ret = qRound(dpiScaled(15, option));
         break;
     case PM_SliderThickness:
-        ret = 15;
+        ret = qRound(dpiScaled(15, option));
         break;
     case PM_SliderLength:
-        ret = 27;
+        ret = qRound(dpiScaled(27, option));
         break;
     case PM_DockWidgetTitleMargin:
         ret = 1;
@@ -3709,19 +3731,19 @@ int DirtylooksStyle::pixelMetric(PixelMetric metric, const QStyleOption *option,
         ret = 2;
         break;
     case PM_SpinBoxFrameWidth:
-        ret = 3;
+        ret = qRound(dpiScaled(3, option));
         break;
     case PM_MenuBarItemSpacing:
-        ret = 6;
+        ret = qRound(dpiScaled(6, option));
         break;
     case PM_MenuBarHMargin:
         ret = 0;
         break;
     case PM_ToolBarHandleExtent:
-        ret = 9;
+        ret = qRound(dpiScaled(9, option));
         break;
     case PM_ToolBarItemSpacing:
-        ret = 2;
+        ret = qRound(dpiScaled(2, option));
         break;
     case PM_ToolBarFrameWidth:
         ret = 0;
@@ -3730,7 +3752,7 @@ int DirtylooksStyle::pixelMetric(PixelMetric metric, const QStyleOption *option,
         ret = 1;
         break;
     case PM_SmallIconSize:
-        ret = 16;
+        ret = qRound(dpiScaled(16, option));
         break;
 //    case PM_ButtonIconSize:
 //        ret = 24;
@@ -3740,13 +3762,13 @@ int DirtylooksStyle::pixelMetric(PixelMetric metric, const QStyleOption *option,
         ret = 0;
         break;
     case PM_DockWidgetTitleBarButtonMargin:
-        ret = 4;
+        ret = qRound(dpiScaled(4, option));
         break;
     case PM_MaximumDragDistance:
         return -1;
     case PM_TabCloseIndicatorWidth:
     case PM_TabCloseIndicatorHeight:
-        return 20;
+        return qRound(dpiScaled(20, option));
     default:
         break;
     }

@@ -21,6 +21,7 @@
 
 #include "platinumstyle.h"
 #include "qtstyles_palette.h"
+#include "qstylehelper_p.h"
 
 #include <QtWidgets/qabstractbutton.h>
 #include <QtWidgets/qcombobox.h>
@@ -1060,7 +1061,7 @@ int PlatinumStyle::pixelMetric(PixelMetric metric, const QStyleOption *option,
 {
     switch (metric) {
     case PM_ButtonDefaultIndicator:
-        return 3;
+        return qRound(QStyleHelper::dpiScaled(3, option));
     case PM_ButtonShiftHorizontal:
     case PM_ButtonShiftVertical:
         // Mac buttons do not shift their label when pressed; the face
@@ -1068,14 +1069,14 @@ int PlatinumStyle::pixelMetric(PixelMetric metric, const QStyleOption *option,
         return 0;
     case PM_IndicatorWidth:
         // Qt 3: 15 x 13 check box indicator.
-        return 15;
+        return qRound(QStyleHelper::dpiScaled(15, option));
     case PM_IndicatorHeight:
-        return 13;
+        return qRound(QStyleHelper::dpiScaled(13, option));
     case PM_ExclusiveIndicatorWidth:
     case PM_ExclusiveIndicatorHeight:
-        return 15;
+        return qRound(QStyleHelper::dpiScaled(15, option));
     case PM_SliderLength:
-        return 17;
+        return qRound(QStyleHelper::dpiScaled(17, option));
     case PM_SliderControlThickness:
         // Qt 3 QWindowsStyle: the business part of the slider is the whole
         // thickness when there are no ticks, otherwise 6 px plus a share of
@@ -1091,7 +1092,7 @@ int PlatinumStyle::pixelMetric(PixelMetric metric, const QStyleOption *option,
                 ++n;
             if (!n)
                 return space;
-            int thick = 6;
+            int thick = qRound(QStyleHelper::dpiScaled(6, option));
             if (ticks != QSlider::TicksBothSides && ticks != QSlider::NoTicks)
                 thick += pixelMetric(PM_SliderLength, option, widget) / 4;
             space -= thick;
@@ -1099,9 +1100,9 @@ int PlatinumStyle::pixelMetric(PixelMetric metric, const QStyleOption *option,
                 thick += (space * 2) / (n + 2);
             return thick;
         }
-        return 11;
+        return qRound(QStyleHelper::dpiScaled(11, option));
     case PM_ScrollBarSliderMin:
-        return 25;
+        return qRound(QStyleHelper::dpiScaled(25, option));
     case PM_MaximumDragDistance:
         return -1;
     default:

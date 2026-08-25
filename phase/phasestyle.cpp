@@ -44,6 +44,7 @@
 
 #include "phasestyle.h"
 #include "bitmaps.h"
+#include "qstylehelper_p.h"
 
 // some convenient constants
 static const int ARROWMARGIN     = 6;
@@ -370,48 +371,53 @@ void PhaseStyle::drawPhaseGradient(QPainter *painter,
     if (horizontal) type = (reverse) ? HorizontalReverse : Horizontal;
     else            type = (reverse) ? VerticalReverse : Vertical;
 
-    name = QString("%1.%2.%3").arg(color.name()).arg(size).arg(type);
+    const qreal dpr = QStyleHelper::getDpr(painter);
+    name = QString("%1.%2.%3.%4").arg(color.name()).arg(size).arg(type).arg(dpr);
     if (!QPixmapCache::find(name, &pixmap)) {
         QPainter cachepainter;
 
         switch (type) {
           case Horizontal: {
-              pixmap = QPixmap(size, 16);
+              pixmap = QPixmap(qRound(size * dpr), qRound(16 * dpr));
+              pixmap.setDevicePixelRatio(dpr);
               QLinearGradient gradient(0, 0, size, 0);
               gradient.setColorAt(0, color.lighter(contrast_));
               gradient.setColorAt(1, color.darker(contrast_));
               cachepainter.begin(&pixmap);
-              cachepainter.fillRect(pixmap.rect(), gradient);
+              cachepainter.fillRect(QRect(0, 0, size, 16), gradient);
               cachepainter.end();
               break;
           }
           case HorizontalReverse: {
-              pixmap = QPixmap(size, 16);
+              pixmap = QPixmap(qRound(size * dpr), qRound(16 * dpr));
+              pixmap.setDevicePixelRatio(dpr);
               QLinearGradient gradient(0, 0, size, 0);
               gradient.setColorAt(0, color.darker(contrast_));
               gradient.setColorAt(1, color.lighter(contrast_));
               cachepainter.begin(&pixmap);
-              cachepainter.fillRect(pixmap.rect(), gradient);
+              cachepainter.fillRect(QRect(0, 0, size, 16), gradient);
               cachepainter.end();
               break;
           }
           case Vertical: {
-              pixmap = QPixmap(16, size);
+              pixmap = QPixmap(qRound(16 * dpr), qRound(size * dpr));
+              pixmap.setDevicePixelRatio(dpr);
               QLinearGradient gradient(0, 0, 0, size);
               gradient.setColorAt(0, color.lighter(contrast_));
               gradient.setColorAt(1, color.darker(contrast_));
               cachepainter.begin(&pixmap);
-              cachepainter.fillRect(pixmap.rect(), gradient);
+              cachepainter.fillRect(QRect(0, 0, 16, size), gradient);
               cachepainter.end();
               break;
           }
           case VerticalReverse: {
-              pixmap = QPixmap(16, size);
+              pixmap = QPixmap(qRound(16 * dpr), qRound(size * dpr));
+              pixmap.setDevicePixelRatio(dpr);
               QLinearGradient gradient(0, 0, 0, size);
               gradient.setColorAt(0, color.darker(contrast_));
               gradient.setColorAt(1, color.lighter(contrast_));
               cachepainter.begin(&pixmap);
-              cachepainter.fillRect(pixmap.rect(), gradient);
+              cachepainter.fillRect(QRect(0, 0, 16, size), gradient);
               cachepainter.end();
               break;
           }
@@ -1539,11 +1545,16 @@ void PhaseStyle::drawControl(ControlElement element,
               else
                   mode = enabled ? QIcon::Normal : QIcon::Disabled;
 
-              QPixmap pixmap = mi->icon.pixmap(pixelMetric(PM_SmallIconSize),
+              const int smallIconSize = pixelMetric(PM_SmallIconSize);
+              QPixmap pixmap = mi->icon.pixmap(QSize(smallIconSize, smallIconSize),
+#if QT_VERSION >= QT_VERSION_CHECK(6, 0, 0)
+                                               QStyleHelper::getDpr(painter),
+#endif
                                                mode);
               vrect = visualRect(mi->direction, rect,
                                  QRect(x, y, checkwidth, h));
-              QRect pmrect(0, 0, pixmap.width(), pixmap.height());
+              QRect pmrect(0, 0, pixmap.width() / pixmap.devicePixelRatio(),
+                           pixmap.height() / pixmap.devicePixelRatio());
               pmrect.moveCenter(vrect.center());
               painter->drawPixmap(pmrect.topLeft(), pixmap);
           }
@@ -2428,7 +2439,7 @@ int PhaseStyle::pixelMetric(PixelMetric metric,
 
     switch (metric) {
       case PM_ButtonDefaultIndicator:   // size of default button frame
-          return 3;
+          return qRound(QStyleHelper::dpiScaled(3, option));
 
       case PM_IndicatorWidth:
       case PM_IndicatorHeight:
@@ -2439,10 +2450,10 @@ int PhaseStyle::pixelMetric(PixelMetric metric,
           return 2;
 
       case PM_DockWidgetTitleMargin:
-          return 2;
+          return qRound(QStyleHelper::dpiScaled(2, option));
 
       case PM_DockWidgetFrameWidth:
-          return 3;
+          return qRound(QStyleHelper::dpiScaled(3, option));
 
       case PM_ScrollBarExtent:          // base width of a vertical scrollbar
           return ex & 0xfffe;
@@ -2451,7 +2462,7 @@ int PhaseStyle::pixelMetric(PixelMetric metric,
           return  ex * 2;
 
       case PM_TabBarTabHSpace:          // extra tab spacing
-          return 24;
+          return qRound(QStyleHelper::dpiScaled(24, option));
 
       case PM_TabBarTabShiftVertical:
           return 2;
@@ -2461,11 +2472,11 @@ int PhaseStyle::pixelMetric(PixelMetric metric,
               qstyleoption_cast<const QStyleOptionTab *>(option);
           if (tab) {
               if (tab->shape == QTabBar::RoundedNorth) {
-                  return 10;
+                  return qRound(QStyleHelper::dpiScaled(10, option));
               }
-              return 6;
+              return qRound(QStyleHelper::dpiScaled(6, option));
           }
-          return 10;
+          return qRound(QStyleHelper::dpiScaled(10, option));
       }
 
       case PM_ProgressBarChunkWidth:
@@ -2473,7 +2484,8 @@ int PhaseStyle::pixelMetric(PixelMetric metric,
           // option->rect is still the default QWidget geometry then.
           return 10;
       case PM_TitleBarHeight:
-          return qMax(option ? option->fontMetrics.lineSpacing() : 0, 20);
+          return qMax(option ? option->fontMetrics.lineSpacing() : 0,
+                      qRound(QStyleHelper::dpiScaled(20, option)));
 
       default:
           return QProxyStyle::pixelMetric(metric, option, widget);
