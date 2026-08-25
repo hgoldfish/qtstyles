@@ -1,0 +1,43 @@
+WindowsModernStyle - Modern Qt style for Windows 
+Version 1.1 (2009-11-23)
+
+WindowsModernStyle is a Qt style for Windows which imitates the look
+of MS Office 2003. It changes the style of toolbars, menus, docked
+windows and toolboxes. The color scheme used by this style is
+automatically adjusted to system settings.
+
+The style can be included in an existing application or compiled as
+a plugin library. This package also contains a demo program using
+this style.
+
+
+Requirements
+============
+
+The style component and the demo program require Qt 4.3 or newer
+(http://www.trolltech.com/products/qt/).
+
+The demo program can be built using the standard 'qmake' tool from Qt.
+
+
+Credits and License
+===================
+
+Copyright (C) 2008-2009 Michał Męciński
+
+Redistribution and use in source and binary forms, with or without
+modification, are permitted provided that the copyright notice is
+retained. See COPYING for more information about the license.
+
+The icons used in the demo application are based on the KDE Crystal
+theme copyright (C) 2002 and following years KDE Artists.
+
+
+Resources
+=========
+
+Website
+    http://www.mimec.org/articles/qt/wmstyle
+
+Forum
+    http://www.mimec.org/forum/qt/wmstyle

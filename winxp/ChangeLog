@@ -1,0 +1,8 @@
+1.1 (2009-11-23)
+    * added: support for toolbar buttons with menus
+    * added: styling splitters in main windows
+    * fixed: improved appearance of styled tab widgets
+    * fixed: painting undocked toolbars
+
+1.0 (2008-07-14)
+    * first official version
