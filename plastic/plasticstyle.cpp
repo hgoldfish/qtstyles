@@ -90,6 +90,26 @@ static const int blueFrameWidth =  2;  // with of line edit focus frame
 #include "qstylehelper_p.h"
 #include "qstylecache_p.h"
 
+// Qt 6 renamed QStyleOptionMenuItem::tabWidth to reservedShortcutWidth,
+// and replaced QPalette::resolve() with resolveMask().
+static inline int menuItemTabWidth(const QStyleOptionMenuItem *mi)
+{
+#if QT_VERSION >= QT_VERSION_CHECK(6, 0, 0)
+    return mi->reservedShortcutWidth;
+#else
+    return mi->tabWidth;
+#endif
+}
+
+static inline quint64 paletteResolveMask(const QPalette &pal)
+{
+#if QT_VERSION >= QT_VERSION_CHECK(6, 0, 0)
+    return pal.resolveMask();
+#else
+    return pal.resolve();
+#endif
+}
+
 // from windows style
 static const int windowsItemFrame        =  2; // menu item frame width
 //static const int windowsSepHeight        =  2; // separator item height
@@ -451,13 +471,11 @@ static void qBrushSetAlphaF(QBrush *brush, qreal alpha)
     if (const QGradient *gradient = brush->gradient()) {
         // Use the gradient. Call QColor::setAlphaF() on all color stops.
         QGradientStops stops = gradient->stops();
-        QMutableVectorIterator<QGradientStop> it(stops);
         QColor tmpColor;
-        while (it.hasNext()) {
-            it.next();
-            tmpColor = it.value().second;
+        for (QGradientStops::iterator it = stops.begin(); it != stops.end(); ++it) {
+            tmpColor = it->second;
             tmpColor.setAlphaF(alpha * tmpColor.alphaF());
-            it.setValue(QPair<qreal, QColor>(it.value().first, tmpColor));
+            it->second = tmpColor;
         }
 
         switch (gradient->type()) {
@@ -518,11 +536,8 @@ static QBrush qBrushLight(QBrush brush, int light)
     if (const QGradient *gradient = brush.gradient()) {
         // Use the gradient. Call QColor::lighter() on all color stops.
         QGradientStops stops = gradient->stops();
-        QMutableVectorIterator<QGradientStop> it(stops);
-        while (it.hasNext()) {
-            it.next();
-            it.setValue(QPair<qreal, QColor>(it.value().first, it.value().second.lighter(light)));
-        }
+        for (QGradientStops::iterator it = stops.begin(); it != stops.end(); ++it)
+            it->second = it->second.lighter(light);
 
         switch (gradient->type()) {
         case QGradient::RadialGradient: {
@@ -581,11 +596,8 @@ static QBrush qBrushDark(QBrush brush, int dark)
     if (const QGradient *gradient = brush.gradient()) {
         // Use the gradient. Call QColor::darker() on all color stops.
         QGradientStops stops = gradient->stops();
-        QMutableVectorIterator<QGradientStop> it(stops);
-        while (it.hasNext()) {
-            it.next();
-            it.setValue(QPair<qreal, QColor>(it.value().first, it.value().second.darker(dark)));
-        }
+        for (QGradientStops::iterator it = stops.begin(); it != stops.end(); ++it)
+            it->second = it->second.darker(dark);
 
         switch (gradient->type()) {
         case QGradient::RadialGradient: {
@@ -2440,7 +2452,7 @@ void PlasticStyle::drawControl(ControlElement element, const QStyleOption *optio
             painter->setFont(font);
             painter->setPen(bar->palette.text().color());
 
-            bool vertical = (bar->orientation == Qt::Vertical);
+            bool vertical = !(option->state & State_Horizontal);
             bool inverted = bar->invertedAppearance;
             bool bottomToTop = bar->bottomToTop;
 
@@ -2497,7 +2509,7 @@ void PlasticStyle::drawControl(ControlElement element, const QStyleOption *optio
     case CE_ProgressBarContents:
         if (const QStyleOptionProgressBar *bar = qstyleoption_cast<const QStyleOptionProgressBar *>(option)) {
             QRect rect = bar->rect;
-            bool vertical = (bar->orientation == Qt::Vertical);
+            bool vertical = !(option->state & State_Horizontal);
             bool inverted = bar->invertedAppearance;
             bool indeterminate = (bar->minimum == 0 && bar->maximum == 0);
             if (!indeterminate && bar->progress == -1)
@@ -2765,7 +2777,7 @@ void PlasticStyle::drawControl(ControlElement element, const QStyleOption *optio
         if (const QStyleOptionMenuItem *menuItem = qstyleoption_cast<const QStyleOptionMenuItem *>(option)) {
             painter->save();
             QBrush textBrush;
-            if (option->palette.resolve() & (1 << QPalette::ButtonText))
+            if (paletteResolveMask(option->palette) & (1 << QPalette::ButtonText))
                 textBrush = option->palette.buttonText();
             else
                 textBrush = option->palette.windowText(); // KDE uses windowText rather than buttonText for menus
@@ -2882,7 +2894,7 @@ void PlasticStyle::drawControl(ControlElement element, const QStyleOption *optio
             }
             int x, y, w, h;
             menuitem->rect.getRect(&x, &y, &w, &h);
-            int tab = menuitem->tabWidth;
+            int tab = menuItemTabWidth(menuitem);
             QColor discol;
             if (dis) {
                 discol = textBrush.color();
@@ -3012,7 +3024,7 @@ void PlasticStyle::drawControl(ControlElement element, const QStyleOption *optio
 
         if (const QStyleOptionMenuItem *mbi = qstyleoption_cast<const QStyleOptionMenuItem *>(option)) {
             QStyleOptionMenuItem newMI = *mbi;
-            if (!(option->palette.resolve() & (1 << QPalette::ButtonText))) //KDE uses windowText rather than buttonText for menus
+            if (!(paletteResolveMask(option->palette) & (1 << QPalette::ButtonText))) //KDE uses windowText rather than buttonText for menus
                 newMI.palette.setColor(QPalette::ButtonText, newMI.palette.windowText().color());
             QCommonStyle::drawControl(element, &newMI, painter, widget);
         }

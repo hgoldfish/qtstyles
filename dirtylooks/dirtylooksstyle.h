@@ -45,8 +45,6 @@
 #include <QtWidgets/qproxystyle.h>
 #include <QtCore/qelapsedtimer.h>
 
-QT_BEGIN_HEADER
-
 QT_BEGIN_NAMESPACE
 
 class QProgressBar;
@@ -110,7 +108,5 @@ private:
 };
 
 QT_END_NAMESPACE
-
-QT_END_HEADER
 
 #endif // DirtylooksStyle_H

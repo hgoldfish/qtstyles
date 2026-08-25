@@ -67,6 +67,16 @@
 #include "qstylehelper_p.h"
 #include "qstylecache_p.h"
 
+// Qt 6 renamed QStyleOptionMenuItem::tabWidth to reservedShortcutWidth.
+static inline int menuItemTabWidth(const QStyleOptionMenuItem *mi)
+{
+#if QT_VERSION >= QT_VERSION_CHECK(6, 0, 0)
+    return mi->reservedShortcutWidth;
+#else
+    return mi->tabWidth;
+#endif
+}
+
 QT_BEGIN_NAMESPACE
 
 using namespace QStyleHelper;
@@ -1506,6 +1516,7 @@ void DirtylooksStyle::drawControl(ControlElement element, const QStyleOption *op
                 default:
                     break;
                 }
+                break;
             case Qt::TopToolBarArea:
                 switch (toolbar->positionWithinLine) {
                 case QStyleOptionToolBar::Beginning:
@@ -1708,7 +1719,7 @@ void DirtylooksStyle::drawControl(ControlElement element, const QStyleOption *op
         painter->save();
         if (const QStyleOptionProgressBar *bar = qstyleoption_cast<const QStyleOptionProgressBar *>(option)) {
             QRect rect = bar->rect;
-            bool vertical = (bar->orientation == Qt::Vertical);
+            bool vertical = !(option->state & State_Horizontal);
             bool inverted = bar->invertedAppearance;
             bool indeterminate = (bar->minimum == 0 && bar->maximum == 0);
 
@@ -1993,7 +2004,7 @@ void DirtylooksStyle::drawControl(ControlElement element, const QStyleOption *op
             }
             int x, y, w, h;
             menuitem->rect.getRect(&x, &y, &w, &h);
-            int tab = menuitem->tabWidth;
+            int tab = menuItemTabWidth(menuitem);
             QColor discol;
             if (dis) {
                 discol = menuitem->palette.text().color();
@@ -3667,7 +3678,6 @@ int DirtylooksStyle::pixelMetric(PixelMetric metric, const QStyleOption *option,
     case PM_ListViewIconSize:
         ret = 24;
         break;
-    case PM_DialogButtonsSeparator:
     case PM_SplitterWidth:
         ret = 6;
         break;
