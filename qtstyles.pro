@@ -1,2 +1,2 @@
 TEMPLATE = subdirs
-SUBDIRS = dirtylooks oldschool plastic
+SUBDIRS = bluecurve dirtylooks keramik oldschool phase platinum plastic preview winxp
