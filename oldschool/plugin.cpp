@@ -42,6 +42,7 @@
 #include <QStylePlugin>
 #include "oldschoolstyle.h"
 #include "newschoolstyle.h"
+#include "highschoolstyle.h"
 
 class OldschoolStylePlugin : public QStylePlugin
 {
@@ -58,6 +59,8 @@ QStyle *OldschoolStylePlugin::create(const QString &key)
         return new OldschoolStyle;
     if (key == "newschool")
         return new NewschoolStyle;
+    if (key == "highschool")
+        return new HighschoolStyle;
     return 0;
 }
 

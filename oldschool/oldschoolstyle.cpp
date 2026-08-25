@@ -40,6 +40,7 @@
 ****************************************************************************/
 
 #include "oldschoolstyle.h"
+#include "qtstyles_palette.h"
 
 #include "qmenu.h"
 #include "qapplication.h"
@@ -68,6 +69,15 @@
 #include "qgraphicsview.h"
 #include <limits.h>
 
+// Qt 6 renamed QStyleOptionMenuItem::tabWidth to reservedShortcutWidth.
+static inline int menuItemTabWidth(const QStyleOptionMenuItem *mi)
+{
+#if QT_VERSION >= QT_VERSION_CHECK(6, 0, 0)
+    return mi->reservedShortcutWidth;
+#else
+    return mi->tabWidth;
+#endif
+}
 
 // old constants that might still be useful...
 static const int motifItemFrame         = 2;    // menu item frame width
@@ -743,7 +753,7 @@ void OldschoolStyle::drawPrimitive(PrimitiveElement pe, const QStyleOption *opt,
     case PE_IndicatorProgressChunk:
         {
             const QStyleOptionProgressBar *pb = qstyleoption_cast<const QStyleOptionProgressBar *>(opt);
-            bool vertical = pb && (pb->orientation == Qt::Vertical);
+            bool vertical = pb && !(opt->state & State_Horizontal);
             if (!vertical) {
                 p->fillRect(opt->rect.x(), opt->rect.y(), opt->rect.width(),
                             opt->rect.height(), opt->palette.brush(QPalette::Highlight));
@@ -994,7 +1004,7 @@ void OldschoolStyle::drawControl(ControlElement element, const QStyleOption *opt
         if (const QStyleOptionProgressBar *pb = qstyleoption_cast<const QStyleOptionProgressBar *>(opt)) {
             QTransform oldMatrix = p->transform();
             QRect rect = pb->rect;
-            bool vertical = (pb->orientation == Qt::Vertical);
+            bool vertical = !(opt->state & State_Horizontal);
             bool invert = pb->invertedAppearance;
             bool bottomToTop = pb->bottomToTop;
             if (vertical) {
@@ -1165,7 +1175,7 @@ void OldschoolStyle::drawControl(ControlElement element, const QStyleOption *opt
             int xm = motifItemFrame + maxpmw + motifItemHMargin;
 
             vrect = visualRect(opt->direction, opt->rect,
-                               QRect(x+xm, y+motifItemVMargin, w-xm-menuitem->tabWidth,
+                               QRect(x+xm, y+motifItemVMargin, w-xm-menuItemTabWidth(menuitem),
                                      h-2*motifItemVMargin));
             xvis = vrect.x();
 
@@ -1181,17 +1191,17 @@ void OldschoolStyle::drawControl(ControlElement element, const QStyleOption *opt
                 p->setFont(menuitem->font);
                 if (t >= 0) {                         // draw tab text
                     QRect vr = visualRect(opt->direction, opt->rect,
-                                          QRect(x+w-menuitem->tabWidth-motifItemHMargin-motifItemFrame,
-                                                y+motifItemVMargin, menuitem->tabWidth,
+                                          QRect(x+w-menuItemTabWidth(menuitem)-motifItemHMargin-motifItemFrame,
+                                                y+motifItemVMargin, menuItemTabWidth(menuitem),
                                                 h-2*motifItemVMargin));
                     int xv = vr.x();
-                    QRect tr(xv, y+m, menuitem->tabWidth, h-2*m);
+                    QRect tr(xv, y+m, menuItemTabWidth(menuitem), h-2*m);
                     p->drawText(tr, text_flags, s.mid(t+1));
                     if (!(opt->state & State_Enabled) && proxy()->styleHint(SH_DitherDisabledText))
                         p->fillRect(tr, QBrush(p->background().color(), Qt::Dense5Pattern));
                     s = s.left(t);
                 }
-                QRect tr(xvis, y+m, w - xm - menuitem->tabWidth + 1, h-2*m);
+                QRect tr(xvis, y+m, w - xm - menuItemTabWidth(menuitem) + 1, h-2*m);
                 p->drawText(tr, text_flags, s.left(t));
                 p->setFont(oldFont);
                 if (!(opt->state & State_Enabled) && proxy()->styleHint(SH_DitherDisabledText))
@@ -1255,7 +1265,7 @@ void OldschoolStyle::drawControl(ControlElement element, const QStyleOption *opt
     case CE_ProgressBarContents:
         if (const QStyleOptionProgressBar *pb = qstyleoption_cast<const QStyleOptionProgressBar *>(opt)) {
             QRect rect = pb->rect;
-            bool vertical = (pb->orientation == Qt::Vertical);
+            bool vertical = !(opt->state & State_Horizontal);
             bool inverted = pb->invertedAppearance;
 
             QTransform m;
@@ -1636,7 +1646,7 @@ int OldschoolStyle::pixelMetric(PixelMetric pm, const QStyleOption *opt,
         break;
 
     case PM_SplitterWidth:
-        ret = qMax(10, QApplication::globalStrut().width());
+        ret = 10;
         break;
 
     case PM_SliderLength:
@@ -1730,7 +1740,6 @@ OldschoolStyle::subControlRect(ComplexControl cc, const QStyleOptionComplex *opt
             QSize bs;
             bs.setHeight(opt->rect.height()/2 - fw);
             bs.setWidth(qMin(bs.height() * 8 / 5, opt->rect.width() / 4)); // 1.6 -approximate golden mean
-            bs = bs.expandedTo(QApplication::globalStrut());
             int y = fw + spinbox->rect.y();
             int x, lx, rx;
             x = spinbox->rect.x() + opt->rect.width() - fw - bs.width();
@@ -2505,10 +2514,22 @@ QPalette OldschoolStyle::standardPalette() const
     QColor mid = QColor(0xa6, 0xa6, 0xa6);
     QColor dark = QColor(0x79, 0x7d, 0x79);
     QPalette palette(Qt::black, background, light, dark, mid, Qt::black, Qt::white);
-    palette.setBrush(QPalette::Disabled, QPalette::WindowText, dark);
-    palette.setBrush(QPalette::Disabled, QPalette::Text, dark);
-    palette.setBrush(QPalette::Disabled, QPalette::ButtonText, dark);
-    palette.setBrush(QPalette::Disabled, QPalette::Base, background);
+    palette.setColor(QPalette::Button, background);
+    palette.setColor(QPalette::ButtonText, Qt::black);
+    palette.setColor(QPalette::BrightText, Qt::white);
+    palette.setColor(QPalette::AlternateBase, QColor(0xf2, 0xf2, 0xf2));
+    palette.setColor(QPalette::ToolTipBase, QColor(0xff, 0xff, 0xdc));
+    palette.setColor(QPalette::ToolTipText, Qt::black);
+    palette.setColor(QPalette::Midlight, background.lighter(110));
+    palette.setColor(QPalette::Shadow, dark.darker(135));
+    palette.setColor(QPalette::PlaceholderText, mid);
+    // Motif 的反白选中由 polish(QPalette&) 在安装时处理；这里给出不依赖
+    // polish 的中性值，两种 highlightCols 模式下都协调。
+    palette.setColor(QPalette::Highlight, Qt::black);
+    palette.setColor(QPalette::HighlightedText, Qt::white);
+    palette.setColor(QPalette::Link, QColor(0x00, 0x00, 0xee));
+    palette.setColor(QPalette::LinkVisited, QColor(0x52, 0x18, 0x8b));
+    QtStyles::applyClassicDisabled(&palette);
     return palette;
 }
 

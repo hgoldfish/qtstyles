@@ -40,6 +40,7 @@
 ****************************************************************************/
 
 #include "newschoolstyle.h"
+#include "qtstyles_palette.h"
 
 #include "qmenu.h"
 #include "qapplication.h"
@@ -252,10 +253,20 @@ QPalette NewschoolStyle::standardPalette() const
     QColor mid = background.darker(150);
     QColor dark = background.darker();
     QPalette palette(Qt::black, background, light, dark, mid, Qt::black, Qt::white);
-    palette.setBrush(QPalette::Disabled, QPalette::WindowText, dark);
-    palette.setBrush(QPalette::Disabled, QPalette::Text, dark);
-    palette.setBrush(QPalette::Disabled, QPalette::ButtonText, dark);
-    palette.setBrush(QPalette::Disabled, QPalette::Base, background);
+    palette.setColor(QPalette::Button, background);
+    palette.setColor(QPalette::ButtonText, Qt::black);
+    palette.setColor(QPalette::BrightText, Qt::white);
+    palette.setColor(QPalette::AlternateBase, QColor(0xf2, 0xf2, 0xf2));
+    palette.setColor(QPalette::ToolTipBase, QColor(0xff, 0xff, 0xdc));
+    palette.setColor(QPalette::ToolTipText, Qt::black);
+    palette.setColor(QPalette::Midlight, background.lighter(110));
+    palette.setColor(QPalette::Shadow, dark.darker(135));
+    palette.setColor(QPalette::PlaceholderText, mid);
+    palette.setColor(QPalette::Highlight, QColor(0x00, 0x00, 0x80));
+    palette.setColor(QPalette::HighlightedText, Qt::white);
+    palette.setColor(QPalette::Link, QColor(0x00, 0x00, 0xee));
+    palette.setColor(QPalette::LinkVisited, QColor(0x52, 0x18, 0x8b));
+    QtStyles::applyClassicDisabled(&palette);
     return palette;
 }
 
