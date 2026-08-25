@@ -44,7 +44,6 @@
 #include <qcombobox.h>
 #include <qpushbutton.h>
 #include <qpainter.h>
-#include <qdir.h>
 #include <qhash.h>
 #include <qstyleoption.h>
 #include <qapplication.h>
