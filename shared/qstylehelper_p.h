@@ -34,9 +34,12 @@
 #include <QtCore/qglobal.h>
 #include <QtCore/qpoint.h>
 #include <QtCore/qstring.h>
+#include <QtGui/qfontmetrics.h>
+#include <QtGui/qpainter.h>
 #include <QtGui/qpolygon.h>
 #include <QtCore/qstringbuilder.h>
 #include <QtGui/qaccessible.h>
+#include <QtWidgets/qstyleoption.h>
 
 #ifndef QSTYLEHELPER_P_H
 #define QSTYLEHELPER_P_H
@@ -65,6 +68,7 @@ class QWindow;
 namespace QStyleHelper
 {
     QString uniqueName(const QString &key, const QStyleOption *option, const QSize &size);
+    QString uniqueName(const QString &key, const QStyleOption *option, const QSize &size, qreal dpr);
 #ifndef QT_NO_DIAL
     qreal angle(const QPointF &p1, const QPointF &p2);
     QPolygonF calcLines(const QStyleOptionSlider *dial);
@@ -80,6 +84,35 @@ namespace QStyleHelper
 #endif
     QColor backgroundColor(const QPalette &pal, const QWidget* widget = 0);
     QWindow *styleObjectWindow(QObject *so);
+
+    // HiDPI helpers.  Qt 6 keeps these in qstylehelper_p.h as exported
+    // functions; we keep them inline here so every style plugin can use them
+    // without linking qstylehelper.cpp for their sake alone.
+    static inline qreal dpi(const QStyleOption *option)
+    {
+        if (option) {
+            const qreal fontDpi = option->fontMetrics.fontDpi();
+            // fontDpi is uninitialised on some platforms (e.g. the offscreen
+            // platform plugin) unless a QFont has been resolved against a
+            // screen; fall back to the historic 96 DPI baseline in that case.
+            if (fontDpi > 0)
+                return fontDpi;
+        }
+        return qreal(96);
+    }
+    static inline qreal dpiScaled(qreal value, qreal dpi)
+    {
+        return value * dpi / qreal(96);
+    }
+    static inline qreal dpiScaled(qreal value, const QStyleOption *option)
+    {
+        return dpiScaled(value, dpi(option));
+    }
+    static inline qreal getDpr(const QPainter *painter)
+    {
+        Q_ASSERT(painter && painter->device());
+        return painter->device()->devicePixelRatio();
+    }
 }
 
 

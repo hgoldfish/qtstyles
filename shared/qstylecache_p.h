@@ -76,7 +76,8 @@ inline QPixmap styleCachePixmap(const QSize &size)
     QPixmap internalPixmapCache; \
     QImage imageCache; \
     QPainter *p = painter; \
-    QString unique = QStyleHelper::uniqueName((a), option, option->rect.size()); \
+    const qreal dpr = QStyleHelper::getDpr(painter); \
+    QString unique = QStyleHelper::uniqueName((a), option, option->rect.size(), dpr); \
     int txType = painter->deviceTransform().type() | painter->worldTransform().type(); \
     bool doPixmapCache = (txType <= QTransform::TxTranslate) \
             || (painter->deviceTransform().type() == QTransform::TxScale); \
@@ -85,7 +86,9 @@ inline QPixmap styleCachePixmap(const QSize &size)
     } else { \
         if (doPixmapCache) { \
             rect.setRect(0, 0, option->rect.width(), option->rect.height()); \
-            imageCache = styleCacheImage(option->rect.size()); \
+            imageCache = styleCacheImage(QSize(qRound(option->rect.width() * dpr), \
+                                                 qRound(option->rect.height() * dpr))); \
+            imageCache.setDevicePixelRatio(dpr); \
             imageCache.fill(0); \
             p = new QPainter(&imageCache); \
         }
@@ -95,6 +98,7 @@ inline QPixmap styleCachePixmap(const QSize &size)
             p->end(); \
             delete p; \
             internalPixmapCache = QPixmap::fromImage(imageCache); \
+            internalPixmapCache.setDevicePixelRatio(dpr); \
             painter->drawPixmap(option->rect.topLeft(), internalPixmapCache); \
             QPixmapCache::insert(unique, internalPixmapCache); \
         } \

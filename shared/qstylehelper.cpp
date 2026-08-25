@@ -51,13 +51,19 @@ namespace QStyleHelper {
 
 QString uniqueName(const QString &key, const QStyleOption *option, const QSize &size)
 {
+    return uniqueName(key, option, size, qreal(1.0));
+}
+
+QString uniqueName(const QString &key, const QStyleOption *option, const QSize &size, qreal dpr)
+{
     const QStyleOptionComplex *complexOption = qstyleoption_cast<const QStyleOptionComplex *>(option);
     QString tmp = key % HexString<uint>(option->state)
                       % HexString<uint>(option->direction)
                       % HexString<uint>(complexOption ? uint(complexOption->activeSubControls) : 0u)
                       % HexString<quint64>(option->palette.cacheKey())
                       % HexString<uint>(size.width())
-                      % HexString<uint>(size.height());
+                      % HexString<uint>(size.height())
+                      % HexString<uint>(qRound(dpr * 100)); // getDpr() returns qreal, avoid possible variations
 
 #ifndef QT_NO_SPINBOX
     if (const QStyleOptionSpinBox *spinBox = qstyleoption_cast<const QStyleOptionSpinBox *>(option)) {
