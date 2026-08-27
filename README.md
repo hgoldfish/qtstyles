@@ -3,14 +3,13 @@ modified the original qt style plugins to improve the quality under hidpi enviro
 * oldschool  ==  motif: the classic Motif drawing and metrics straight from
   `QMotifStyle` (bevels, default-button indicator, tristate check boxes,
   inverted selection, Motif arrows and scroll bars).  Pure Motif look, no
-  SGI colouring (see its `README.md`).
+  SGI colouring.
 * newschool  ==  cde
 * highschool ==  OldschoolStyle with the SGI / Irix accents layered on top:
   the warm beige-grey palette (beige input wells, Motif inverted selection)
   and the red SGI check marks / red radio dots in diamond indicators.  Every
-  other widget keeps the classic Motif drawing and metrics (see
-  `oldschool/README.md`).  A clean-room rewrite; shares no code with the
-  original Qt 3 SGI style by Trolltech.
+  other widget keeps the classic Motif drawing and metrics.  A clean-room
+  rewrite; shares no code with the original Qt 3 SGI style by Trolltech.
 * plastic    ==  plastique
 * dirtylooks ==  cleanlooks
 
@@ -25,7 +24,7 @@ modified the original qt style plugins to improve the quality under hidpi enviro
   animation and the animated busy (indeterminate) progress bars, so they
   work without a Windows theme engine. The plugin also
   ships `winxp-blue`, `winxp-silver` and `winxp-olive` with the fixed
-  Windows XP Luna palettes (see its `README.md`).
+  Windows XP Luna palettes.
 * phase      ==  phase (original Qt 4/KDE widget style by David Johnson, MIT).
   Like the other plugins it derives from `QProxyStyle`: layout and the widgets
   it does not re-draw are delegated to the **Windows** base style
@@ -53,10 +52,10 @@ the project's LGPL license.
 * keramik  ==  the ceramic-themed KDE 3 / TDE style (2002). Built on
   `QProxyStyle`: smooth bevel gradients, rounded buttons with thin frames,
   sunken rounded input wells, and palette-highlight slider / scroll-bar
-  handles.
-
-Each of these ships its own `README.md` with the full visual specification
-(palette derivation, element drawing details, size tables, hover behaviour).
+  handles. Besides the classic widgets it also covers the modern control set —
+  tool buttons with menu indicators, group boxes, tool boxes, dock-widget
+  titles, tool tips, tree branches, size grips and animated busy progress
+  bars.
 
 ## Colour scheme policy
 
@@ -65,23 +64,31 @@ Every style provides a classic colour palette through
 imitates used (e.g. the SGI beige-grey of `highschool`, the Mac "Platinum"
 warm grey of `platinum`, or the Windows 2000 palette of `winxp`). This is a
 **suggestion only**: Qt never applies it automatically (the platform-theme
-palette wins), and none of the styles forces it. Applications are free to call
-`QApplication::setPalette(style->standardPalette())` when they want the classic
-look, or to keep their own palette.
+palette wins), and none of the plain style keys forces it. Applications are
+free to call `QApplication::setPalette(style->standardPalette())` when they
+want the classic look, or to keep their own palette.
 
-Every `standardPalette()` fills in the full role set explicitly (all
-`QPalette::ColorRole`s plus the Disabled group derived by the shared helper in
-`lib/qtstyles_palette.h`), so the returned palette is **self-contained**: it
-does not inherit from the palette active at call time. This matters when
-switching styles at run time — an incomplete palette would silently pick up
-roles from the previously applied palette.
+Every `standardPalette()` fills in the full role set explicitly for **all three
+`QPalette::ColorGroup`s** (Active, Inactive and Disabled) — every `ColorRole`
+the widgets can use: the text/selection roles, the bevel ramp
+(Light/Midlight/Mid/Dark/Shadow) that buttons, frames, sliders and scroll bars
+draw with, the tool-tip and placeholder roles, link colours, and on Qt 6.8+ the
+`Accent` role (aliased to `Highlight`). The Disabled group is derived by the
+shared helper in `lib/qtstyles_palette.h`, so the returned palette is
+**self-contained**: it does not inherit from the palette active at call time.
+This matters when switching styles at run time — an incomplete palette would
+silently pick up roles from the previously applied palette.
 
-The only exceptions are the three fixed `winxp-blue`, `winxp-silver` and
-`winxp-olive` variants: like the original Windows XP themes, their colours are
-hard-coded and applied through `polish(QPalette&)` when the style is installed,
-so selecting one of those keys always shows the matching Luna palette. Every
-other style (including `winxp` in Classic mode) leaves the incoming palette
-alone.
+Each style also ships a `-classic` variant (`keramik-classic`,
+`oldschool-classic`, `newschool-classic`, `highschool-classic`,
+`plastic-classic`, `phase-classic`, `winxp-classic`, `dirtylooks-classic`,
+`bluecurve-classic`, `platinum-classic`). Unlike the plain keys, which leave
+the incoming palette alone, selecting one of these keys **forces** the style's
+`standardPalette()`: it is applied through `polish(QPalette&)` when the style
+is installed, so the classic look always wins regardless of the host theme.
+The same mechanism is used by the three fixed Luna variants `winxp-blue`,
+`winxp-silver` and `winxp-olive`, whose hard-coded Windows XP colours are
+applied at installation time.
 
 ## Building for Qt 6
 
