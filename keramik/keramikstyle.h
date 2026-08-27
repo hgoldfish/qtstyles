@@ -24,17 +24,22 @@
 
 #include <QtWidgets/qproxystyle.h>
 #include <QtCore/qhash.h>
+#include <QtCore/qlist.h>
 
 class QPainter;
+class QProgressBar;
 class QStyleOption;
 class QStyleOptionMenuItem;
+class QStyleOptionProgressBar;
 class QStyleOptionTab;
+class QTimer;
 
 /*
     Keramik is the ceramic-themed widget style of KDE 3 / TDE. It is
-    characterised by smooth bevel gradients, slightly rounded buttons with
-    thin frames, square recessed input wells, and accent-coloured (palette
-    highlight) slider and scroll-bar handles.
+    characterised by smooth bevel gradients, lightly rounded free-standing
+    buttons, square flush panels (scroll bars, spins, thumbs), thin frames,
+    square recessed input wells, and accent-coloured (palette highlight)
+    slider and scroll-bar handles.
 
     This implementation is a clean-room rewrite written purely for this
     project. The look is reproduced with QPainter vectors and a small
@@ -50,7 +55,9 @@ class KeramikStyle : public QProxyStyle
     Q_OBJECT
 
 public:
-    KeramikStyle();
+    // 当 forceClassicPalette 为 true 时（对应 "keramik-classic" 键），样式
+    // 安装时通过 polish(QPalette&) 强制套用 standardPalette() 的经典配色。
+    explicit KeramikStyle(bool forceClassicPalette = false);
     ~KeramikStyle();
 
     void polish(QWidget *widget) override;
@@ -75,6 +82,10 @@ public:
     int styleHint(StyleHint sh, const QStyleOption *opt = nullptr,
                   const QWidget *widget = nullptr,
                   QStyleHintReturn *shret = nullptr) const override;
+    QRect subElementRect(SubElement sr, const QStyleOption *opt,
+                         const QWidget *widget = nullptr) const override;
+
+    bool eventFilter(QObject *obj, QEvent *event) override;
 
 private:
     // Palette-derived colour ramp. gradientTop/gradientBottom are the two
@@ -99,18 +110,20 @@ private:
 
     const KeramikColors *colors(const QPalette &palette) const;
 
-    static QPainterPath roundedRect(const QRect &r, int radius);
-
-    void drawButtonPanel(QPainter *p, const QStyleOption *opt) const;
+    // Free-standing buttons keep rounded corners; flush inside-controls
+    // (scroll-bar / spin-box faces) pass rounded=false for a square panel.
+    void drawButtonPanel(QPainter *p, const QStyleOption *opt,
+                         bool rounded = true) const;
     void drawWell(QPainter *p, const QStyleOption *opt) const;
     void drawHighlightPanel(QPainter *p, const QStyleOption *opt,
-                            const QRect &r, int radius) const;
-    void drawGroove(QPainter *p, const QStyleOption *opt, const QRect &r) const;
+                            const QRect &r, bool inset = true) const;
+    void drawGroove(QPainter *p, const QStyleOption *opt, const QRect &r,
+                    bool recessed = true) const;
     void drawCheckBoxIndicator(QPainter *p, const QStyleOption *opt,
                                bool on, bool tri) const;
     void drawRadioIndicator(QPainter *p, const QStyleOption *opt, bool on) const;
     void drawCheckMark(QPainter *p, const QRect &r, const QColor &color) const;
-    void drawRipple(QPainter *p, const QRect &r, const QColor &color) const;
+    void drawRipple(QPainter *p, const QStyleOption *opt, const QRect &r) const;
     void drawArrow(QPainter *p, PrimitiveElement pe, const QRect &r,
                    const QColor &color, const QColor *etch = nullptr) const;
     void drawComboArrow(QPainter *p, const QRect &r, const QColor &color) const;
@@ -122,7 +135,30 @@ private:
     void drawScrollBarButton(QPainter *p, const QStyleOption *opt,
                              const QRect &r, PrimitiveElement arrow) const;
 
+    // Modern-control drawing helpers.
+    void drawToolButton(QPainter *p, const QStyleOption *opt,
+                        const QWidget *widget) const;
+    void drawGroupBox(QPainter *p, const QStyleOption *opt,
+                      const QWidget *widget) const;
+    void drawToolBoxTab(QPainter *p, const QStyleOption *opt) const;
+    void drawDockWidgetTitle(QPainter *p, const QStyleOption *opt) const;
+    void drawToolTip(QPainter *p, const QStyleOption *opt) const;
+    void drawSizeGrip(QPainter *p, const QStyleOption *opt) const;
+    void drawBranch(QPainter *p, const QStyleOption *opt) const;
+    void drawMenuScroller(QPainter *p, const QStyleOption *opt) const;
+    void drawProgressContents(QPainter *p, const QStyleOption *opt) const;
+    void drawProgressLabel(QPainter *p, const QStyleOptionProgressBar *pb) const;
+
+    // Busy (indeterminate) QProgressBar animation: one QTimer advances the
+    // value of every visible busy bar, exactly like phase/winxp in this repo.
+    void addProgressBar(QProgressBar *bar);
+    void removeProgressBar(QProgressBar *bar);
+    void animateProgressBars();
+
     mutable QHash<quint64, KeramikColors> m_colorCache;
+    bool m_forceClassicPalette;
+    QTimer *m_busyTimer = nullptr;
+    QList<QProgressBar *> m_busyBars;
 };
 
 #endif // KERAMIKSTYLE_H

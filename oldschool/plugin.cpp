@@ -57,10 +57,16 @@ QStyle *OldschoolStylePlugin::create(const QString &key)
 {
     if (key == "oldschool")
         return new OldschoolStyle;
+    if (key == "oldschool-classic")
+        return new OldschoolStyle(false, true);
     if (key == "newschool")
         return new NewschoolStyle;
+    if (key == "newschool-classic")
+        return new NewschoolStyle(false, true);
     if (key == "highschool")
         return new HighschoolStyle;
+    if (key == "highschool-classic")
+        return new HighschoolStyle(false, true);
     return 0;
 }
 

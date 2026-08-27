@@ -13,6 +13,8 @@ QStyle *PhaseStylePlugin::create(const QString &key)
 {
     if (key.toLower() == "phase")
         return new PhaseStyle;
+    if (key.toLower() == "phase-classic")
+        return new PhaseStyle(true);
     return 0;
 }
 

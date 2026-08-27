@@ -66,8 +66,8 @@
 #include <limits.h>
 
 
-NewschoolStyle::NewschoolStyle(bool useHighlightCols)
-    : OldschoolStyle(useHighlightCols)
+NewschoolStyle::NewschoolStyle(bool useHighlightCols, bool forceClassicPalette)
+    : OldschoolStyle(useHighlightCols, forceClassicPalette)
 {
     spinboxHCoeff = 10;
 }

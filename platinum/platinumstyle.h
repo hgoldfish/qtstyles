@@ -33,6 +33,7 @@ class QRect;
 class QSize;
 class QStyleOption;
 class QStyleOptionProgressBar;
+class QTimer;
 class QWidget;
 
 /*
@@ -40,7 +41,9 @@ class QWidget;
     classic Macintosh system software (Mac OS 8/9): a warm beige/gray color
     scheme, square command buttons with cut corners, multi-line beveled
     panels, radio buttons drawn as point-sequence circles, square check
-    boxes and riffle-decorated slider and scroll bar handles.
+    boxes, accent-colored scroll/slider thumbs with riffles, Mac OS 9
+    signature textures (title-bar racing stripes, grow-box size grip),
+    disclosure triangles, primary group boxes and accent focus rings.
 
     The style is built on QProxyStyle with the "windows" style as its base,
     so every element that is not re-drawn here keeps a solid classic look.
@@ -53,10 +56,13 @@ class PlatinumStyle : public QProxyStyle
     Q_OBJECT
 
 public:
-    PlatinumStyle();
+    // 当 forceClassicPalette 为 true 时（对应 "platinum-classic" 键），样式
+    // 安装时通过 polish(QPalette&) 强制套用 standardPalette() 的经典配色。
+    explicit PlatinumStyle(bool forceClassicPalette = false);
     ~PlatinumStyle() override;
 
     void polish(QWidget *widget) override;
+    void polish(QPalette &palette) override;
     void unpolish(QWidget *widget) override;
     bool eventFilter(QObject *watched, QEvent *event) override;
 
@@ -76,17 +82,15 @@ public:
 
     QPalette standardPalette() const override;
 
-protected:
-    void timerEvent(QTimerEvent *event) override;
-
 private:
     // busy（indeterminate）进度条集合。QProgressBar 通过 polish 安装的事件
-    // 过滤器进出这个集合，集合非空时由 timerEvent 驱动重绘。
+    // 过滤器进出这个集合，集合非空时由 QTimer 驱动重绘。
     void startProgressAnimation(QProgressBar *bar);
     void stopProgressAnimation(QProgressBar *bar);
+    void animateProgressBars();
 
     QList<QProgressBar *> animatedBars;
-    int animateTimer = 0;
+    QTimer *animationTimer = nullptr;
     int animationFps = 30;
 
     // Qt 3 PE_ButtonBevel: a multi-line bevel drawn with plain lines, square
@@ -119,12 +123,45 @@ private:
     // riffles are drawn as vertical lines.
     void drawRiffles(QPainter *painter, const QRect &rect, const QPalette &palette,
                      bool horizontal) const;
+    void drawRiffles(QPainter *painter, const QRect &rect, const QColor &light,
+                     const QColor &dark, bool horizontal) const;
+
+    // Appearance Manager "variation" / accent color: scroll thumbs, slider
+    // tabs and focus rings. Derived from Highlight; very dark highlights are
+    // lifted into the classic periwinkle range so riffles stay readable.
+    static QColor accentColor(const QPalette &palette);
+
+    // Mac OS 8/9 title-bar "racing stripes": alternating Light/Dark 1 px
+    // lines. @p vertical draws columns instead of rows (for vertical dock
+    // title bars).
+    void drawRacingStripes(QPainter *painter, const QRect &rect,
+                           const QPalette &palette, bool vertical = false) const;
+
+    // Mac OS grow box: diagonal Light/Dark ridges in the status-bar corner.
+    void drawSizeGrip(QPainter *painter, const QStyleOption *option) const;
+
+    // Dock title with racing stripes (active) and a solid title gap, like
+    // a Platinum window title bar.
+    void drawDockWidgetTitle(QPainter *painter, const QStyleOption *option) const;
+
+    // Finder-style disclosure triangle + guide lines (PE_IndicatorBranch).
+    void drawBranch(QPainter *painter, const QStyleOption *option) const;
+
+    // Primary group box: raised 2 px frame with the title punched out.
+    void drawGroupBox(QPainter *painter, const QStyleOption *option,
+                      const QWidget *widget) const;
 
     // Qt 3 Windows-style three-line arrow (also used for scroll bar and
     // combo box buttons): the outline is drawn in @p line and the arrow tip
     // in @p point.
     void drawArrow(QPainter *painter, PrimitiveElement arrow, const QRect &rect,
                    const QColor &line, const QColor &point) const;
+
+    // Enabled: solid @p enabledColor glyph. Disabled: Qt 3 Light etch at
+    // +1,+1 under a Mid glyph (the missing “disabled arrow shadow”).
+    void drawArrowGlyph(QPainter *painter, PrimitiveElement arrow, const QRect &rect,
+                        const QPalette &palette, bool enabled,
+                        const QColor &enabledColor) const;
 
     // Double-drawn check mark (a dark offset shadow pass plus the main pass),
     // like the Qt 3 point-array check marks.
@@ -141,6 +178,8 @@ private:
                                  const QWidget *widget) const;
 
     static QColor mixedColor(const QColor &c1, const QColor &c2);
+
+    bool m_forceClassicPalette;
 };
 
 #endif // PLATINUMSTYLE_H

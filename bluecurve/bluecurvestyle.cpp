@@ -121,7 +121,10 @@ static const double shadeFactors[8] = {
     1.065, 0.963, 0.896, 0.85, 0.768, 0.665, 0.4, 0.205
 };
 
-BluecurveStyle::BluecurveStyle() = default;
+BluecurveStyle::BluecurveStyle(bool forceClassicPalette)
+    : m_forceClassicPalette(forceClassicPalette)
+{
+}
 BluecurveStyle::~BluecurveStyle() = default;
 
 /*!
@@ -335,7 +338,11 @@ void BluecurveStyle::drawArrow(QPainter *p, PrimitiveElement pe, const QRect &r,
     if (size < 3)
         return;
 
+    // The filled triangle only spans (half + 1) scanlines (base width =
+    // size), not a size×size box.  Center that actual span so tall rects
+    // (toolbutton arrow slots) don't float the glyph above/below mid.
     const int half = size / 2;
+    const int span = half + 1;
 
     p->save();
     p->setRenderHint(QPainter::Antialiasing, false);
@@ -343,15 +350,15 @@ void BluecurveStyle::drawArrow(QPainter *p, PrimitiveElement pe, const QRect &r,
     p->setBrush(color);
     if (up || down) {
         const bool tipFirst = up;
-        const int y0 = cy - half;
-        for (int i = 0; i <= half; ++i) {
+        const int y0 = cy - (span - 1) / 2;
+        for (int i = 0; i < span; ++i) {
             const int w = tipFirst ? i * 2 + 1 : (half - i) * 2 + 1;
             p->drawRect(cx - w / 2, y0 + i, w, 1);
         }
     } else {
         const bool tipFirst = left;
-        const int x0 = cx - half;
-        for (int i = 0; i <= half; ++i) {
+        const int x0 = cx - (span - 1) / 2;
+        for (int i = 0; i < span; ++i) {
             const int w = tipFirst ? i * 2 + 1 : (half - i) * 2 + 1;
             p->drawRect(x0 + i, cy - w / 2, 1, w);
         }
@@ -483,6 +490,16 @@ void BluecurveStyle::polish(QWidget *widget)
     QCommonStyle::polish(widget);
 }
 
+void BluecurveStyle::polish(QPalette &palette)
+{
+    // "bluecurve-classic" 在安装时强制套用标准配色，保证与经典观感一致，
+    // 不受宿主主题影响。
+    if (m_forceClassicPalette)
+        palette = standardPalette();
+    QCommonStyle::polish(palette);
+    m_colorCache.clear();
+}
+
 void BluecurveStyle::unpolish(QWidget *widget)
 {
     if (QProgressBar *bar = qobject_cast<QProgressBar *>(widget)) {
@@ -562,10 +579,15 @@ void BluecurveStyle::drawPrimitive(PrimitiveElement pe, const QStyleOption *opt,
 
     switch (pe) {
     case PE_IndicatorHeaderArrow: {
-        QStyleOption arrowOpt(*opt);
-        arrowOpt.state |= QStyle::State_Enabled;
-        drawPrimitive((opt->state & State_UpArrow) ? PE_IndicatorArrowUp : PE_IndicatorArrowDown,
-                      &arrowOpt, p, widget);
+        // Qt 6 QCommonStyle::CE_Header no longer sets State_UpArrow /
+        // State_DownArrow; direction lives only in sortIndicator.  Match
+        // QCommonStyle's geometry: SortUp → tip down, SortDown → tip up.
+        const QStyleOptionHeader *header = qstyleoption_cast<const QStyleOptionHeader *>(opt);
+        if (!header || header->sortIndicator == QStyleOptionHeader::None)
+            break;
+        const bool tipDown = header->sortIndicator == QStyleOptionHeader::SortUp;
+        drawPrimitive(tipDown ? PE_IndicatorArrowDown : PE_IndicatorArrowUp,
+                      opt, p, widget);
         break;
     }
 
@@ -802,7 +824,9 @@ void BluecurveStyle::drawPrimitive(PrimitiveElement pe, const QStyleOption *opt,
     }
 
     case PE_IndicatorProgressChunk:
-        drawGradientBox(p, r, opt->palette, 0.92, 1.66);
+        // Darker than the old 0.92→1.66 ramp so the chunk stays readable
+        // against the shades[3] groove (1.66 washed out to near-white).
+        drawGradientBox(p, r, opt->palette, 0.78, 1.18);
         break;
 
     case PE_IndicatorArrowUp:
@@ -854,6 +878,34 @@ void BluecurveStyle::drawControl(ControlElement element, const QStyleOption *opt
         // PE_FrameDefaultButton and then CE_PushButtonLabel).
         QCommonStyle::drawControl(element, opt, p, widget);
         break;
+
+    case CE_PushButtonBevel: {
+        // QCommonStyle draws HasMenu with a (mbi-6)² rect — about 6×6 under
+        // our PM_MenuButtonIndicator — which our drawArrow further shrinks
+        // to a 3px triangle.  Always strip HasMenu for the base bevel, then
+        // paint a 9×8 arrow centered in the indicator strip when needed.
+        const QStyleOptionButton *btn = qstyleoption_cast<const QStyleOptionButton *>(opt);
+        if (!btn)
+            break;
+        const bool hasMenu = btn->features & QStyleOptionButton::HasMenu;
+        QStyleOptionButton face = *btn;
+        face.features &= ~QStyleOptionButton::HasMenu;
+        QCommonStyle::drawControl(CE_PushButtonBevel, &face, p, widget);
+        if (!hasMenu)
+            break;
+
+        const int mbi = pixelMetric(PM_MenuButtonIndicator, btn, widget);
+        QStyleOptionButton arrowOpt = *btn;
+        QRect ar(0, 0, 9, 8);
+        const int midY = (btn->rect.top() + btn->rect.bottom()) / 2;
+        const int midX = btn->direction == Qt::LeftToRight
+                             ? btn->rect.right() - mbi / 2
+                             : btn->rect.left() + mbi / 2;
+        ar.moveCenter(QPoint(midX, midY));
+        arrowOpt.rect = ar;
+        drawPrimitive(PE_IndicatorArrowDown, &arrowOpt, p, widget);
+        break;
+    }
 
     case CE_PushButtonLabel: {
         const QStyleOptionButton *button = qstyleoption_cast<const QStyleOptionButton *>(opt);
@@ -953,6 +1005,18 @@ void BluecurveStyle::drawControl(ControlElement element, const QStyleOption *opt
             pmSize = QSize(9, 8);
         }
 
+        // Paint the arrow in a fixed 9×8 slot centered in `area`.  Passing the
+        // whole (tall) toolbutton rect makes drawArrow scale off min(w,h) and
+        // look vertically shifted next to text.
+        const auto paintToolArrow = [&](const QRect &area) {
+            QStyleOption arrowOpt(*toolbutton);
+            QRect ar(0, 0, pmSize.width(), pmSize.height());
+            ar.moveCenter(QPoint((area.left() + area.right()) / 2,
+                                 (area.top() + area.bottom()) / 2));
+            arrowOpt.rect = ar;
+            drawPrimitive(arrowPE, &arrowOpt, p, widget);
+        };
+
         if (toolbutton->toolButtonStyle != Qt::ToolButtonIconOnly) {
             p->setFont(toolbutton->font);
             QRect pr = rect, tr = rect;
@@ -966,11 +1030,8 @@ void BluecurveStyle::drawControl(ControlElement element, const QStyleOption *opt
                 pr.translate(shiftX, shiftY);
                 if (!hasArrow)
                     drawItemPixmap(p, pr, Qt::AlignCenter, pm);
-                else {
-                    QStyleOption arrowOpt(*toolbutton);
-                    arrowOpt.rect = pr;
-                    drawPrimitive(arrowPE, &arrowOpt, p, widget);
-                }
+                else
+                    paintToolArrow(pr);
                 alignment |= Qt::AlignCenter;
             } else {
                 pr.setWidth(pmSize.width() + 4);
@@ -978,11 +1039,8 @@ void BluecurveStyle::drawControl(ControlElement element, const QStyleOption *opt
                 pr.translate(shiftX, shiftY);
                 if (!hasArrow)
                     drawItemPixmap(p, visualRect(opt->direction, rect, pr), Qt::AlignCenter, pm);
-                else {
-                    QStyleOption arrowOpt(*toolbutton);
-                    arrowOpt.rect = visualRect(opt->direction, rect, pr);
-                    drawPrimitive(arrowPE, &arrowOpt, p, widget);
-                }
+                else
+                    paintToolArrow(visualRect(opt->direction, rect, pr));
                 alignment |= Qt::AlignLeft | Qt::AlignVCenter;
             }
             tr.translate(shiftX, shiftY);
@@ -990,13 +1048,10 @@ void BluecurveStyle::drawControl(ControlElement element, const QStyleOption *opt
                          toolbutton->state & State_Enabled, toolbutton->text, QPalette::ButtonText);
         } else {
             rect.translate(shiftX, shiftY);
-            if (hasArrow) {
-                QStyleOption arrowOpt(*toolbutton);
-                arrowOpt.rect = rect;
-                drawPrimitive(arrowPE, &arrowOpt, p, widget);
-            } else {
+            if (hasArrow)
+                paintToolArrow(rect);
+            else
                 drawItemPixmap(p, rect, Qt::AlignCenter, pm);
-            }
         }
         break;
     }
@@ -1006,11 +1061,53 @@ void BluecurveStyle::drawControl(ControlElement element, const QStyleOption *opt
         if (!tabOpt)
             break;
 
-        const bool below = tabOpt->shape == QTabBar::RoundedSouth || tabOpt->shape == QTabBar::TriangularSouth;
-        QRect tr = r;
-        QRect fr = r;
+        // North/South are drawn in place. West/East are rotated into a
+        // North-equivalent local frame (open edge toward the page), matching
+        // CE_TabBarTabLabel's transform. Drawing West as North without the
+        // rotate shrinks the wrong axis and leaves a 1px hairline between
+        // stacked vertical tabs.
+        const bool south = tabOpt->shape == QTabBar::RoundedSouth
+                           || tabOpt->shape == QTabBar::TriangularSouth;
+        const bool west = tabOpt->shape == QTabBar::RoundedWest
+                          || tabOpt->shape == QTabBar::TriangularWest;
+        const bool east = tabOpt->shape == QTabBar::RoundedEast
+                          || tabOpt->shape == QTabBar::TriangularEast;
 
-        if (below) {
+        p->save();
+        QRect tr = r;
+        if (west) {
+            p->translate(r.x(), r.y() + r.height());
+            p->rotate(-90);
+            tr = QRect(0, 0, r.height(), r.width());
+        } else if (east) {
+            p->translate(r.x() + r.width(), r.y());
+            p->rotate(90);
+            tr = QRect(0, 0, r.height(), r.width());
+        }
+
+        // QTabBar lays tabs out adjacent (PM_TabBarTabOverlap is style-only).
+        // Drawing both side borders makes a 2px seam.  Neighbors of the
+        // selected tab drop the edge that faces it; the selected tab (painted
+        // last, selectedPosition == NotAdjacent) keeps both sides.  North
+        // selected also punches the page-side strokes into the pane; West/East
+        // must not (local bottom is not that punch axis — see punchIntoPane).
+        // Local +x toward previous (West -90°, or RTL north/south): mirror
+        // which side faces previous/next.
+        const bool mirrorStrip = west
+                                 || (tabOpt->direction == Qt::RightToLeft && !east);
+        const bool prevIsSel = tabOpt->selectedPosition == QStyleOptionTab::PreviousIsSelected;
+        const bool nextIsSel = tabOpt->selectedPosition == QStyleOptionTab::NextIsSelected;
+        const bool omitLeft = mirrorStrip ? nextIsSel : prevIsSel;
+        const bool omitRight = mirrorStrip ? prevIsSel : nextIsSel;
+        // False under West/East rotate; North uses it to extend strokes past
+        // local bottom into the pane (East/West must not — wrong axis).
+        const bool punchIntoPane = !west && !east;
+
+        // West/East are already in a North frame; only South keeps the
+        // mirrored bevel path.
+        QRect fr = tr;
+
+        if (south) {
             tr.adjust(0, 1, 0, 0);
             fr.adjust(2, 2, -2, -2);
         } else {
@@ -1018,45 +1115,99 @@ void BluecurveStyle::drawControl(ControlElement element, const QStyleOption *opt
             fr.adjust(1, 2, -2, -2);
         }
 
+        // Under ±90°, QPainter::fillRect drops the local-left column (after
+        // West's rotate that column is the seam toward the next tab).  Most
+        // of it matches the tab-bar background; at the page edge the pane
+        // border peeks through as a 1px speck.  A 1×h fillRect hits the same
+        // bug — stroke the column with drawLine instead.
+        const auto fillFace = [&](const QRect &faceRect, const QColor &color) {
+            p->fillRect(faceRect, color);
+            if (west || east) {
+                p->setPen(color);
+                p->drawLine(faceRect.left(), faceRect.top(),
+                            faceRect.left(), faceRect.bottom());
+            }
+        };
+
         if (!(opt->state & State_Selected)) {
-            if (below) {
+            // Unselected: inset from the page-facing edge.  North/East use
+            // top+=1; South uses bottom-=1.  West's -90° frame makes local
+            // bottom face the page (local top is the outer edge), so it must
+            // share South's bottom inset — North's top+=1 would indent the
+            // outer edge and leave a 1px step against the selected tab.
+            if (south || west) {
                 tr.adjust(0, 0, 0, -1);
                 fr.adjust(0, 0, 0, -1);
             } else {
                 tr.adjust(0, 1, 0, 0);
                 fr.adjust(0, 1, 0, 0);
             }
-            p->save();
+            // Same outer edge as drawRect(tr.adjusted(0,0,-1,-1)): right/bottom
+            // land on tr.right()/tr.bottom().
+            const int x1 = tr.left();
+            const int x2 = tr.right();
+            const int y1 = tr.top();
+            const int y2 = tr.bottom();
             p->setPen(cdata->shades[6]);
-            p->drawRect(tr.adjusted(0, 0, -1, -1));
+            if (!omitLeft)
+                p->drawLine(x1, y1, x1, y2);
+            p->drawLine(x1, y1, x2, y1);
+            if (!omitRight)
+                p->drawLine(x2, y1, x2, y2);
+            p->drawLine(x1, y2, x2, y2);
             p->setPen(opt->palette.light().color());
-            if (!below)
-                p->drawLine(tr.left() + 1, tr.top() + 1, tr.right() - 1, tr.top() + 1);
+            if (!south) {
+                const int hx1 = omitLeft ? x1 : x1 + 1;
+                const int hx2 = omitRight ? x2 : x2 - 1;
+                if (hx1 <= hx2)
+                    p->drawLine(hx1, y1 + 1, hx2, y1 + 1);
+            }
             p->setPen(cdata->shades[2]);
-            p->drawLine(tr.right() - 1, tr.top() + 1, tr.right() - 1, tr.bottom() - 1);
-            p->fillRect(fr, cdata->shades[2]);
-            p->restore();
+            if (!omitRight)
+                p->drawLine(x2 - 1, y1 + 1, x2 - 1, y2 - 1);
+            // Cover the column where the omitted side border would have been,
+            // so it sits flush against the selected tab's edge (no hairline gap
+            // and no need to expand the selected tab into this rect).
+            if (omitLeft)
+                fr.setLeft(tr.left());
+            if (omitRight)
+                fr.setRight(tr.right());
+            fillFace(fr, cdata->shades[2]);
         } else {
-            fr.adjust(1, 0, 0, below ? 0 : 2);
-            p->save();
+            // Indent past the left highlight.  Non-south: +2 undoes the bevel's
+            // bottom inset so fill reaches tr.bottom(); North then punches the
+            // left/highlight strokes past that into the pane.
+            fr.adjust(1, 0, 0, south ? 0 : 2);
+            // North only: fill was still 1px short of the right border, so the
+            // tab-bar base peeked through as a dark speck at the selected|next
+            // corner.  Do NOT apply this on West/East — in that frame local
+            // +x points along the strip, and growing right would paint into
+            // the previous-tab / above-tab side (the “dot moved 1px in” bug).
+            // Do NOT extend the right stroke to bottom+1 either — that plants
+            // a border pixel below the baseline (horizontal “digs in 1px”).
+            if (!south && punchIntoPane)
+                fr.adjust(0, 0, 1, 0);
             p->setPen(cdata->shades[6]);
-            if (below) {
+            if (south) {
                 p->drawLine(tr.left(), tr.bottom() - 1, tr.left(), tr.top() - 1);
                 p->drawLine(tr.left(), tr.bottom(), tr.right(), tr.bottom());
                 p->drawLine(tr.right(), tr.top(), tr.right(), tr.bottom() - 1);
             } else {
-                p->drawLine(tr.left(), tr.bottom() + 1, tr.left(), tr.top() + 1);
+                p->drawLine(tr.left(), tr.bottom() + (punchIntoPane ? 1 : 0),
+                            tr.left(), tr.top() + 1);
                 p->drawLine(tr.left(), tr.top(), tr.right(), tr.top());
                 p->drawLine(tr.right(), tr.top() + 1, tr.right(), tr.bottom());
             }
             p->setPen(opt->palette.light().color());
-            if (below)
+            if (south) {
                 p->drawLine(tr.left() + 1, tr.bottom() - 1, tr.left() + 1, tr.top() - 2);
-            else
-                p->drawLine(tr.left() + 1, tr.bottom() + 2, tr.left() + 1, tr.top() + 2);
-            p->fillRect(fr, opt->palette.window().color());
-            p->restore();
+            } else {
+                p->drawLine(tr.left() + 1, tr.bottom() + (punchIntoPane ? 2 : 0),
+                            tr.left() + 1, tr.top() + 2);
+            }
+            fillFace(fr, opt->palette.window().color());
         }
+        p->restore();
         break;
     }
 
@@ -1282,7 +1433,7 @@ void BluecurveStyle::drawControl(ControlElement element, const QStyleOption *opt
         if (pr.width() <= 0 || pr.height() <= 0)
             break;
 
-        drawGradientBox(p, pr, opt->palette, 0.92, 1.66);
+        drawGradientBox(p, pr, opt->palette, 0.78, 1.18);
 
         if (pb->textVisible && !pb->text.isEmpty()) {
             // 块内文字：白色，clip 到填充块，避免盖到块外。SE_ProgressBarGroove
@@ -1820,6 +1971,14 @@ void BluecurveStyle::drawComplexControl(ComplexControl control, const QStyleOpti
             if (mflags & (State_Sunken | State_On | State_Raised))
                 drawPrimitive(PE_IndicatorButtonDropDown, &tool, p, widget);
             drawPrimitive(PE_IndicatorArrowDown, &tool, p, widget);
+        } else if (toolbutton->features & QStyleOptionToolButton::HasMenu) {
+            // InstantPopup: small down-arrow in the lower-right corner (same
+            // placement as QCommonStyle / Keramik).
+            const int mbi = pixelMetric(PM_MenuButtonIndicator, toolbutton, widget);
+            QStyleOptionToolButton arrowBtn = *toolbutton;
+            QRect ar(button.right() + 5 - mbi, button.bottom() - mbi + 4, mbi - 6, mbi - 6);
+            arrowBtn.rect = visualRect(toolbutton->direction, button, ar);
+            drawPrimitive(PE_IndicatorArrowDown, &arrowBtn, p, widget);
         }
         break;
     }
@@ -2094,6 +2253,11 @@ QSize BluecurveStyle::sizeFromContents(ContentsType contents, const QStyleOption
     }
 
     case CT_ToolButton: {
+        // Tab-bar scroll buttons are QToolButton children sized by
+        // PM_TabBarScrollButtonWidth; forcing 32×32 here makes the vertical
+        // pair overflow their reserved strip and look mis-spaced.
+        if (widget && qobject_cast<const QTabBar *>(widget->parentWidget()))
+            break;
         int w = ret.width(), h = ret.height();
         if (h < 32)
             h = 32;

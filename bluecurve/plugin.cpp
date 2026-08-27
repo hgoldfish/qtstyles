@@ -38,6 +38,8 @@ QStyle *BluecurveStylePlugin::create(const QString &key)
 {
     if (key.compare(QStringLiteral("bluecurve"), Qt::CaseInsensitive) == 0)
         return new BluecurveStyle;
+    if (key.compare(QStringLiteral("bluecurve-classic"), Qt::CaseInsensitive) == 0)
+        return new BluecurveStyle(true);
     return nullptr;
 }
 

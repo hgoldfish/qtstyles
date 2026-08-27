@@ -15,7 +15,9 @@ lessThan(QT_MAJOR_VERSION, 6) {
 
 QT = core gui widgets
 
-# The HiDPI helpers (qstylehelper_p.h) live in ../shared.
+# The HiDPI helpers (qstylehelper_p.h) live in ../shared; the classic
+# palette helpers (qtstyles_palette.h) live in ../lib.
+INCLUDEPATH += $$PWD/../lib
 INCLUDEPATH += $$PWD/../shared
 
 HEADERS = phasestyle.h bitmaps.h

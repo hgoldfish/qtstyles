@@ -3,6 +3,6 @@ qt_add_plugin(phasestyle
     plugin.cpp
 )
 target_link_libraries(phasestyle PRIVATE Qt6::Widgets)
-target_include_directories(phasestyle PRIVATE ${CMAKE_CURRENT_SOURCE_DIR}/../shared)
+target_include_directories(phasestyle PRIVATE ${CMAKE_CURRENT_SOURCE_DIR}/../lib ${CMAKE_CURRENT_SOURCE_DIR}/../shared)
 
 install(TARGETS phasestyle DESTINATION "${QT6_INSTALL_PLUGINS}/styles")

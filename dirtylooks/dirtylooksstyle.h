@@ -54,7 +54,9 @@ class DirtylooksStyle : public QProxyStyle
     Q_OBJECT
 
 public:
-    DirtylooksStyle();
+    // 当 forceClassicPalette 为 true 时（对应 "dirtylooks-classic" 键），样式
+    // 安装时通过 polish(QPalette&) 强制套用 standardPalette() 的经典配色。
+    explicit DirtylooksStyle(bool forceClassicPalette = false);
     ~DirtylooksStyle();
 
     QPalette standardPalette () const Q_DECL_OVERRIDE;
@@ -105,6 +107,7 @@ private:
     int animateTimer;
     QElapsedTimer startTime;
     QList<QProgressBar *> animatedProgressBars;
+    bool m_forceClassicPalette;
 };
 
 QT_END_NAMESPACE

@@ -13,10 +13,11 @@ public:
 QStringList WinXPStylePlugin::keys() const
 {
     return QStringList()
-        << QStringLiteral("winxp")         // Classic (palette-based)
-        << QStringLiteral("winxp-blue")    // Windows XP Luna Blue
-        << QStringLiteral("winxp-silver")  // Windows XP Luna Silver
-        << QStringLiteral("winxp-olive");  // Windows XP Luna Olive
+        << QStringLiteral("winxp")          // Classic (palette-based Office chrome)
+        << QStringLiteral("winxp-classic")  // Luna Blue dialog look, forced palette
+        << QStringLiteral("winxp-blue")     // Windows XP Luna Blue (Office chrome)
+        << QStringLiteral("winxp-silver")   // Windows XP Luna Silver
+        << QStringLiteral("winxp-olive");   // Windows XP Luna Olive
 }
 
 QStyle *WinXPStylePlugin::create(const QString &key)
@@ -24,6 +25,8 @@ QStyle *WinXPStylePlugin::create(const QString &key)
     const QString lower = key.toLower();
     if (lower == QLatin1String("winxp"))
         return new WinXPStyle(WinXPStyle::Classic);
+    if (lower == QLatin1String("winxp-classic"))
+        return new WinXPStyle(WinXPStyle::Blue, true);
     if (lower == QLatin1String("winxp-blue"))
         return new WinXPStyle(WinXPStyle::Blue);
     if (lower == QLatin1String("winxp-silver"))

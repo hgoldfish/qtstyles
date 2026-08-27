@@ -213,12 +213,20 @@ static void startXPTransition( QWidget* widget, XPButtonAnimation* anim,
 
 } // namespace
 
-// The ring color of a "defaulted" button: the Luna orange for the three fixed
-// schemes, the palette highlight for Classic.
+// The ring color of a "defaulted" button: Luna uses the deep button border
+// (Blue #003C74), not the orange hot accent. Classic falls back to Highlight.
 static QColor xpDefaultGlow( WinXPStyle::Mode mode, const QPalette& palette )
 {
-    return mode == WinXPStyle::Classic ? palette.color( QPalette::Highlight )
-                                       : QColor( 0xF9, 0xA7, 0x39 );
+    switch ( mode ) {
+        case WinXPStyle::Olive:
+            return QColor( 0x05, 0x62, 0x06 );
+        case WinXPStyle::Silver:
+            return QColor( 0x6E, 0x6E, 0x6E );
+        case WinXPStyle::Classic:
+            return palette.color( QPalette::Highlight );
+        default: // Blue
+            return QColor( 0x00, 0x3C, 0x74 );
+    }
 }
 
 // @p defaulted keeps the default-button ring on the Hot/Pressed states too,
@@ -268,8 +276,8 @@ static XPButtonColors xpButtonColors( WinXPStyle::Mode mode, const QPalette& pal
                         palette.color( QPalette::Button ), palette.color( QPalette::Midlight ),
                         QColor() };
                 default: // Blue
-                    return { QColor( 0xB9, 0xC7, 0xE4 ), QColor( 0xF6, 0xF8, 0xFB ),
-                        QColor( 0xEF, 0xF3, 0xFA ), QColor( 0xE2, 0xEA, 0xF6 ),
+                    return { QColor( 0xC9, 0xC7, 0xB8 ), QColor( 0xF8, 0xF8, 0xF4 ),
+                        QColor( 0xF0, 0xF0, 0xEA ), QColor( 0xE0, 0xDF, 0xD4 ),
                         QColor() };
             }
 
@@ -301,9 +309,9 @@ static XPButtonColors xpButtonColors( WinXPStyle::Mode mode, const QPalette& pal
                         QColor() };
                     break;
                 }
-                default: // Blue
+                default: // Blue — Luna FillColorHint 243,243,239 / Border 0,60,116
                     colors = { QColor( 0x00, 0x3C, 0x74 ), QColor( 0xFF, 0xFF, 0xFF ),
-                        QColor( 0xDF, 0xEA, 0xFB ), QColor( 0xAB, 0xC3, 0xEF ),
+                        QColor( 0xF3, 0xF3, 0xEF ), QColor( 0xE5, 0xE4, 0xDA ),
                         QColor() };
                     break;
             }
@@ -316,9 +324,10 @@ static XPButtonColors xpButtonColors( WinXPStyle::Mode mode, const QPalette& pal
     return XPButtonColors();
 }
 
-WinXPStyle::WinXPStyle( Mode mode )
+WinXPStyle::WinXPStyle( Mode mode, bool forceClassicPalette )
     : QProxyStyle( QStyleFactory::create( QLatin1String("Windows") ) ),
       m_mode( mode ),
+      m_forceClassicPalette( forceClassicPalette ),
       m_progressTimer( new QTimer( this ) )
 {
     // The busy (indeterminate) progress bar is animated by a QTimer. A plain
@@ -334,15 +343,15 @@ WinXPStyle::~WinXPStyle()
 }
 
 /*!
-    Returns the classic Windows 2000 palette as the suggested palette for
-    the style.  This is a suggestion only -- Qt does not adopt it
-    automatically.  The fixed Luna schemes (Blue/Silver/Olive) are applied
-    by polish(QPalette&) when the style is installed; Classic mode leaves
-    the incoming palette alone, so this suggestion is what a caller can use
-    to reproduce the classic Windows 2000 look.
+    Returns the classic Windows XP Luna Blue Control Panel Colors as the
+    suggested palette for the style.  This is a suggestion only -- Qt does
+    not adopt it automatically.  The fixed Luna schemes (Blue/Silver/Olive)
+    still only override selection tones in polish unless forceClassicPalette
+    is set; the "winxp-classic" key forces this palette in full.
 */
 QPalette WinXPStyle::standardPalette() const
 {
+    // Control Panel\Colors for the default Luna (Blue) theme.
     QPalette palette;
     palette.setColor(QPalette::Window, QColor(0xec, 0xe9, 0xd8));
     palette.setColor(QPalette::WindowText, QColor(0x00, 0x00, 0x00));
@@ -355,13 +364,13 @@ QPalette WinXPStyle::standardPalette() const
     palette.setColor(QPalette::ButtonText, QColor(0x00, 0x00, 0x00));
     palette.setColor(QPalette::BrightText, QColor(0xff, 0xff, 0xff));
     palette.setColor(QPalette::Light, QColor(0xff, 0xff, 0xff));
-    palette.setColor(QPalette::Midlight, QColor(0xd4, 0xd0, 0xc8));
-    palette.setColor(QPalette::Mid, QColor(0xc0, 0xc0, 0xc0));
-    palette.setColor(QPalette::Dark, QColor(0x80, 0x80, 0x80));
-    palette.setColor(QPalette::Shadow, QColor(0x40, 0x40, 0x40));
-    palette.setColor(QPalette::Highlight, QColor(0x00, 0x00, 0x80));
+    palette.setColor(QPalette::Midlight, QColor(0xf1, 0xef, 0xe2));
+    palette.setColor(QPalette::Mid, QColor(0xac, 0xa8, 0x99));
+    palette.setColor(QPalette::Dark, QColor(0x71, 0x6f, 0x64));
+    palette.setColor(QPalette::Shadow, QColor(0x71, 0x6f, 0x64));
+    palette.setColor(QPalette::Highlight, QColor(0x31, 0x6a, 0xc5));
     palette.setColor(QPalette::HighlightedText, QColor(0xff, 0xff, 0xff));
-    palette.setColor(QPalette::PlaceholderText, QColor(0x80, 0x80, 0x80));
+    palette.setColor(QPalette::PlaceholderText, QColor(0xac, 0xa8, 0x99));
     palette.setColor(QPalette::Link, QColor(0x00, 0x00, 0xff));
     palette.setColor(QPalette::LinkVisited, QColor(0x80, 0x00, 0x80));
 
@@ -372,6 +381,11 @@ QPalette WinXPStyle::standardPalette() const
 void WinXPStyle::polish( QPalette& palette )
 {
     QProxyStyle::polish( palette );
+
+    // winxp-classic: install the full Luna Blue Control Panel Colors first so
+    // Classic derivation (if ever used) and widget fills see the beige face.
+    if ( m_forceClassicPalette )
+        palette = standardPalette();
 
     // The original style probed the Windows theme engine (uxtheme.dll) to
     // pick the active Luna/Aero scheme. Blue, Silver and Olive reproduce the
@@ -600,6 +614,39 @@ void WinXPStyle::polish( QPalette& palette )
             m_colors.groupBoxBorder = palette.color( QPalette::Dark );
             m_colors.groupBoxBorderLight = palette.color( QPalette::Midlight );
             break;
+    }
+
+    // Dialog-faithful chrome for winxp-classic: property sheets use a flat
+    // beige client, white menus, solid Luna-blue selection (no Office candy
+    // stripe), and Luna rebar colours for toolbars / dock titles / toolboxes —
+    // not the Office 2003 blue candy bars that Mode::Blue assigns above.
+    // Rebar FillColorHint from ReactOS Luna: 241,243,239 (not a QPalette role).
+    if ( m_forceClassicPalette ) {
+        const QColor face = palette.color( QPalette::Window );
+        const QColor rebar( 0xf1, 0xf3, 0xef );
+        const QColor sel = palette.color( QPalette::Highlight );
+        const QColor dark = palette.color( QPalette::Dark );
+        m_colorBackgroundBegin = m_colorBackgroundEnd = face;
+        m_colorBarBegin = Qt::white;
+        m_colorBarMiddle = rebar;
+        m_colorBarEnd = face;
+        m_colorBorder = dark;
+        m_colorBorderLight = QColor( 0xd0, 0xd0, 0xbf );
+        m_colorHandle = dark;
+        m_colorHandleLight = Qt::white;
+        m_colorSeparator = palette.color( QPalette::Mid );
+        m_colorSeparatorLight = Qt::white;
+        m_colorMenuBackground = Qt::white;
+        m_colorMenuBorder = dark;
+        m_colorItemBorder = sel;
+        m_colorItemBackgroundBegin = m_colorItemBackgroundMiddle = m_colorItemBackgroundEnd = sel;
+        m_colorItemCheckedBegin = m_colorItemCheckedMiddle = m_colorItemCheckedEnd = sel;
+        m_colorItemSunkenBegin = m_colorItemSunkenMiddle = m_colorItemSunkenEnd = QColor( 0x21, 0x5d, 0xc6 );
+        // standardPalette() already has the full Luna set; keep disabled tones.
+        palette.setColor( QPalette::Disabled, QPalette::Text, m_colors.fieldTextDisabled );
+        palette.setColor( QPalette::Disabled, QPalette::WindowText, m_colors.fieldTextDisabled );
+        palette.setColor( QPalette::Disabled, QPalette::ButtonText, m_colors.fieldTextDisabled );
+        return;
     }
 
     // Item views draw their selection with QPalette::Highlight; give each
@@ -835,6 +882,11 @@ int WinXPStyle::pixelMetric( PixelMetric metric, const QStyleOption* option, con
             // compact on both orientations.
             return qRound( QStyleHelper::dpiScaled( 12, option ) );
 
+        case PM_HeaderMarkSize:
+            // Padding box around the fixed 7×7 header chevron. Mark may grow
+            // with DPI; the glyph stays 7×7 (see PE_IndicatorHeaderArrow).
+            return qRound( QStyleHelper::dpiScaled( 9, option ) );
+
         default:
             break;
     }
@@ -938,6 +990,52 @@ QRect WinXPStyle::subElementRect( SubElement element, const QStyleOption* option
         case SE_ProgressBarContents:
             rect = option->rect.adjusted( 2, 2, -2, -2 );
             break;
+
+        case SE_HeaderArrow: {
+            // QCommonStyle sizes this as half the section height — far too
+            // large for our 7×7 Luna chevron, and on tight columns the glyph
+            // then sits on top of the label. Pin a mark-sized square on the
+            // trailing edge, vertically centered.
+            if ( const QStyleOptionHeader* header = qstyleoption_cast<const QStyleOptionHeader*>( option ) ) {
+                if ( header->sortIndicator == QStyleOptionHeader::None ) {
+                    rect = QRect();
+                    break;
+                }
+            }
+            const int margin = pixelMetric( PM_HeaderMargin, option, widget );
+            const int mark = pixelMetric( PM_HeaderMarkSize, option, widget );
+            QRect markRect( 0, 0, mark, mark );
+            const bool horizontal = option->state & State_Horizontal;
+            if ( horizontal ) {
+                markRect.moveCenter( QPoint(
+                    option->rect.right() - margin - mark / 2,
+                    option->rect.center().y() ) );
+            } else {
+                markRect.moveCenter( QPoint(
+                    option->rect.center().x(),
+                    option->rect.bottom() - margin - mark / 2 ) );
+            }
+            rect = visualRect( option->direction, option->rect, markRect );
+            break;
+        }
+
+        case SE_HeaderLabel: {
+            // Pair with SE_HeaderArrow: reserve mark+margin instead of the
+            // CommonStyle half-height carve-out.
+            const int margin = pixelMetric( PM_HeaderMargin, option, widget );
+            rect = option->rect.adjusted( margin, margin, -margin, -margin );
+            if ( const QStyleOptionHeader* header = qstyleoption_cast<const QStyleOptionHeader*>( option ) ) {
+                if ( header->sortIndicator != QStyleOptionHeader::None ) {
+                    const int mark = pixelMetric( PM_HeaderMarkSize, option, widget );
+                    if ( option->state & State_Horizontal )
+                        rect.setWidth( qMax( 0, rect.width() - mark - margin ) );
+                    else
+                        rect.setHeight( qMax( 0, rect.height() - mark - margin ) );
+                }
+            }
+            rect = visualRect( option->direction, option->rect, rect );
+            break;
+        }
 
         default:
             break;
@@ -1462,9 +1560,17 @@ void WinXPStyle::drawXPGroupBox( QPainter* painter, const QStyleOption* option )
     if ( rect.width() < 2 || rect.height() < 2 )
         return;
 
+    painter->save();
     painter->setPen( m_colors.groupBoxBorder );
     painter->setBrush( Qt::NoBrush );
-    painter->drawRect( rect.adjusted( 0, 0, -1, -1 ) );
+    // Property-sheet Luna uses slightly rounded frames; Classic stays sharp.
+    if ( m_mode != Classic ) {
+        painter->setRenderHint( QPainter::Antialiasing, true );
+        painter->drawRoundedRect( QRectF( rect ).adjusted( 0.5, 0.5, -0.5, -0.5 ), 3.0, 3.0 );
+    } else {
+        painter->drawRect( rect.adjusted( 0, 0, -1, -1 ) );
+    }
+    painter->restore();
 }
 
 void WinXPStyle::drawXPSplitterHandle( QPainter* painter, const QStyleOption* option ) const
@@ -1511,6 +1617,8 @@ void WinXPStyle::drawPrimitive( PrimitiveElement element, const QStyleOption* op
     // PE_WindowGradient is a private extension outside QStyle::PrimitiveElement,
     // so it cannot be used as a case label in the switch below (-Wswitch).
     if ( element == static_cast<PrimitiveElement>( PE_WindowGradient ) ) {
+        // polish() already flattens begin/end to the same beige for
+        // winxp-classic, so a two-stop gradient is a solid fill there.
         QLinearGradient gradient( option->rect.topLeft(), option->rect.topRight() );
         gradient.setColorAt( 0.0, m_colorBackgroundBegin );
         gradient.setColorAt( 0.6, m_colorBackgroundEnd );
@@ -1659,6 +1767,29 @@ void WinXPStyle::drawPrimitive( PrimitiveElement element, const QStyleOption* op
         case PE_IndicatorDockWidgetResizeHandle:
             return;
 
+        case PE_IndicatorHeaderArrow:
+            // Header sort chevron. SE_HeaderArrow already sizes the rect;
+            // use the 7×7 spin glyph so it stays crisp like other Luna arrows.
+            //
+            // QCommonStyle draws SortUp tip-down and SortDown tip-up; match
+            // that visual, not the enum name. (QHeaderView's Ascending→enum
+            // mapping flipped across Qt versions; the enum→geometry map did not.)
+            if ( const QStyleOptionHeader* header = qstyleoption_cast<const QStyleOptionHeader*>( option ) ) {
+                if ( header->sortIndicator == QStyleOptionHeader::None )
+                    return;
+                const bool tipDown = header->sortIndicator == QStyleOptionHeader::SortUp;
+                const QColor color = ( option->state & State_Enabled )
+                    ? option->palette.color( QPalette::ButtonText )
+                    : option->palette.color( QPalette::Disabled, QPalette::ButtonText );
+                // Must stay exactly 7×7: drawXPGlyphArrow treats 9×9 as the
+                // scroll-arrow bitmap. dpiScaled(7) rounding into 9 would
+                // silently swap in the wrong chevron.
+                drawXPGlyphArrow( painter, option->rect.center(), 7, 7,
+                    tipDown ? Qt::DownArrow : Qt::UpArrow, color );
+                return;
+            }
+            break;
+
         case PE_PanelButtonTool:
             if ( widget && widget->inherits( "QDockWidgetTitleButton" ) ) {
                 if ( option->state & ( QStyle::State_MouseOver | QStyle::State_Sunken ) ) {
@@ -1704,6 +1835,11 @@ void WinXPStyle::drawPrimitive( PrimitiveElement element, const QStyleOption* op
         case PE_FrameTabWidget:
             if ( isStyledTabWidget( widget ) ) {
                 painter->fillRect( option->rect, option->palette.window() );
+                if ( m_forceClassicPalette ) {
+                    painter->setPen( QColor( 0x91, 0x9b, 0x9c ) );
+                    painter->setBrush( Qt::NoBrush );
+                    painter->drawRect( option->rect.adjusted( 0, 0, -1, -1 ) );
+                }
                 return;
             }
             break;
@@ -1848,9 +1984,26 @@ void WinXPStyle::drawControl( ControlElement element, const QStyleOption* option
             return;
 
         case CE_MenuBarEmptyArea:
+            if ( m_forceClassicPalette )
+                painter->fillRect( option->rect, m_colorBackgroundBegin );
             return;
 
         case CE_MenuBarItem:
+            if ( m_forceClassicPalette ) {
+                const bool hot = option->state & QStyle::State_Enabled
+                    && ( option->state & ( QStyle::State_Selected | QStyle::State_Sunken ) );
+                if ( hot ) {
+                    painter->fillRect( option->rect.adjusted( 0, 0, -1, -1 ), QColor( 0x31, 0x6a, 0xc5 ) );
+                }
+                if ( const QStyleOptionMenuItem* optionItem = qstyleoption_cast<const QStyleOptionMenuItem*>( option ) ) {
+                    int flags = Qt::AlignCenter | Qt::TextShowMnemonic | Qt::TextDontClip | Qt::TextSingleLine;
+                    if ( !styleHint( SH_UnderlineShortcut, option, widget ) )
+                        flags |= Qt::TextHideMnemonic;
+                    const QPalette::ColorRole role = hot ? QPalette::HighlightedText : QPalette::Text;
+                    drawItemText( painter, option->rect, flags, option->palette, true, optionItem->text, role );
+                }
+                return;
+            }
             if ( option->state & QStyle::State_Sunken && option->state & QStyle::State_Enabled ) {
                 painter->setPen( m_colorMenuBorder );
                 QLinearGradient gradient( option->rect.topLeft(), option->rect.bottomLeft() );
@@ -1889,7 +2042,13 @@ void WinXPStyle::drawControl( ControlElement element, const QStyleOption* option
             return;
 
         case CE_MenuItem: {
-            if ( option->state & QStyle::State_Selected && option->state & QStyle::State_Enabled ) {
+            const bool selected = option->state & QStyle::State_Selected && option->state & QStyle::State_Enabled;
+            if ( m_forceClassicPalette ) {
+                // Plain XP menu: white field, solid Luna-blue selection, no Office margin stripe.
+                painter->fillRect( option->rect, m_colorMenuBackground );
+                if ( selected )
+                    painter->fillRect( option->rect.adjusted( 1, 0, -1, -1 ), QColor( 0x31, 0x6a, 0xc5 ) );
+            } else if ( selected ) {
                 painter->setPen( m_colorItemBorder );
                 painter->setBrush( m_colorItemBackgroundBegin );
                 painter->drawRect( option->rect.adjusted( 1, 0, -3, -1 ) );
@@ -1907,7 +2066,8 @@ void WinXPStyle::drawControl( ControlElement element, const QStyleOption* option
             if ( const QStyleOptionMenuItem* optionItem = qstyleoption_cast<const QStyleOptionMenuItem*>( option ) ) {
                 if ( optionItem->menuItemType == QStyleOptionMenuItem::Separator ) {
                     painter->setPen( m_colorSeparator );
-                    painter->drawLine( option->rect.left() + 32, ( option->rect.top() + option->rect.bottom() ) / 2,
+                    const int sepLeft = m_forceClassicPalette ? option->rect.left() + 8 : option->rect.left() + 32;
+                    painter->drawLine( sepLeft, ( option->rect.top() + option->rect.bottom() ) / 2,
                         option->rect.right(), ( option->rect.top() + option->rect.bottom() ) / 2 );
                     return;
                 }
@@ -1915,7 +2075,7 @@ void WinXPStyle::drawControl( ControlElement element, const QStyleOption* option
                 checkRect.setWidth( 20 );
                 if ( optionItem->checked && option->state & QStyle::State_Enabled ) {
                     painter->setPen( m_colorItemBorder );
-                    if ( option->state & QStyle::State_Selected && option->state & QStyle::State_Enabled )
+                    if ( selected )
                         painter->setBrush( m_colorItemSunkenBegin );
                     else
                         painter->setBrush( m_colorItemCheckedBegin );
@@ -1946,24 +2106,28 @@ void WinXPStyle::drawControl( ControlElement element, const QStyleOption* option
                         optionCheckMark.palette.setBrush( QPalette::Text, optionCheckMark.palette.brush( QPalette::Disabled, QPalette::Text ) );
                     drawPrimitive( PE_IndicatorMenuCheckMark, &optionCheckMark, painter, widget );
                 }
-                QRect textRect = option->rect.adjusted( 32, 1, -16, -1 );
+                QRect textRect = option->rect.adjusted( m_forceClassicPalette ? 24 : 32, 1, -16, -1 );
                 int flags = Qt::AlignVCenter | Qt::TextShowMnemonic | Qt::TextDontClip | Qt::TextSingleLine;
                 if ( !styleHint( SH_UnderlineShortcut, option, widget ) )
                     flags |= Qt::TextHideMnemonic;
                 QString text = optionItem->text;
                 int pos = text.indexOf( '\t' );
+                const QPalette::ColorRole textRole = ( m_forceClassicPalette && selected )
+                    ? QPalette::HighlightedText : QPalette::Text;
                 if ( pos >= 0 ) {
                     drawItemText( painter, textRect, flags | Qt::AlignRight, option->palette, option->state & State_Enabled,
-                        text.mid( pos + 1 ), QPalette::Text );
+                        text.mid( pos + 1 ), textRole );
                     text = text.left( pos );
                 }
-                drawItemText( painter, textRect, flags, option->palette, option->state & State_Enabled, text, QPalette::Text );
+                drawItemText( painter, textRect, flags, option->palette, option->state & State_Enabled, text, textRole );
                 if ( optionItem->menuItemType == QStyleOptionMenuItem::SubMenu ) {
                     QStyleOption optionArrow;
                     optionArrow.initFrom( widget );
                     optionArrow.rect = option->rect.adjusted( 0, 4, -4, -4 );
                     optionArrow.rect.setLeft( option->rect.right() - 12 );
                     optionArrow.state = option->state & State_Enabled;
+                    if ( m_forceClassicPalette && selected )
+                        optionArrow.palette.setColor( QPalette::WindowText, Qt::white );
                     drawPrimitive( PE_IndicatorArrowRight, &optionArrow, painter, widget );
                 }
             }
@@ -2083,21 +2247,52 @@ void WinXPStyle::drawControl( ControlElement element, const QStyleOption* option
                     gradient = QLinearGradient( rect.topRight(), rect.topLeft() );
                 else
                     gradient = QLinearGradient( rect.topLeft(), rect.bottomLeft() );
-                if ( option->state & State_Selected ) {
+                // Property-sheet tabs (winxp-classic only): selected tab merges
+                // into the pane with a 2px orange stripe; inactive tabs are flat
+                // beige. Silver/Olive keep the Office candy-tab path below.
+                if ( m_forceClassicPalette && ( option->state & State_Selected ) ) {
+                    painter->setPen( QColor( 0x91, 0x9b, 0x9c ) );
+                    painter->setBrush( option->palette.window().color() );
+                    painter->drawRect( rect );
+                    const QColor orange( 0xe6, 0x8b, 0x2c );
+                    if ( south )
+                        painter->fillRect( QRect( rect.left() + 1, rect.bottom() - 1, rect.width() - 2, 2 ), orange );
+                    else if ( west )
+                        painter->fillRect( QRect( rect.left(), rect.top() + 1, 2, rect.height() - 2 ), orange );
+                    else if ( east )
+                        painter->fillRect( QRect( rect.right() - 1, rect.top() + 1, 2, rect.height() - 2 ), orange );
+                    else
+                        painter->fillRect( QRect( rect.left() + 1, rect.top(), rect.width() - 2, 2 ), orange );
+                } else if ( m_forceClassicPalette ) {
+                    if ( option->state & State_MouseOver && option->state & State_Enabled ) {
+                        gradient.setColorAt( 0.0, QColor( 0xff, 0xf8, 0xe0 ) );
+                        gradient.setColorAt( 1.0, QColor( 0xf1, 0xf1, 0xec ) );
+                        painter->setPen( QColor( 0xfa, 0xc4, 0x58 ) );
+                        painter->setBrush( gradient );
+                    } else {
+                        painter->setPen( QColor( 0xb0, 0xb0, 0xa8 ) );
+                        painter->setBrush( QColor( 0xf1, 0xf1, 0xec ) );
+                    }
+                    painter->drawRect( rect );
+                } else if ( option->state & State_Selected ) {
                     gradient.setColorAt( 0.0, m_colorItemBackgroundBegin );
                     gradient.setColorAt( 1.0, option->palette.window().color() );
                     painter->setPen( m_colorBorder );
+                    painter->setBrush( gradient );
+                    painter->drawRect( rect );
                 } else if ( option->state & State_MouseOver && option->state & State_Enabled ) {
                     gradient.setColorAt( 0.0, m_colorItemBackgroundBegin );
                     gradient.setColorAt( 1.0, m_colorItemBackgroundEnd );
                     painter->setPen( m_colorBorderLight );
+                    painter->setBrush( gradient );
+                    painter->drawRect( rect );
                 } else {
                     gradient.setColorAt( 0.0, m_colorBarMiddle );
                     gradient.setColorAt( 1.0, m_colorBarEnd );
                     painter->setPen( m_colorBorderLight );
+                    painter->setBrush( gradient );
+                    painter->drawRect( rect );
                 }
-                painter->setBrush( gradient );
-                painter->drawRect( rect );
                 painter->restore();
                 return;
             }
@@ -2357,26 +2552,32 @@ void WinXPStyle::drawControl( ControlElement element, const QStyleOption* option
         case CE_ScrollBarLast:
             return;
 
-        case CE_HeaderSection: {
-            drawXPHeaderSection( painter, option );
+        case CE_Header:
+            // Full header pipeline (same proxy-bypass pattern as CE_PushButton /
+            // CE_TabBarTab): section face, label, then sort arrow in SE_HeaderArrow.
             if ( const QStyleOptionHeader* header = qstyleoption_cast<const QStyleOptionHeader*>( option ) ) {
+                const QRegion clipRegion = painter->clipRegion();
+                painter->setClipRect( header->rect );
+                drawControl( CE_HeaderSection, header, painter, widget );
+                QStyleOptionHeader subopt = *header;
+                subopt.rect = subElementRect( SE_HeaderLabel, header, widget );
+                if ( subopt.rect.isValid() )
+                    drawControl( CE_HeaderLabel, &subopt, painter, widget );
                 if ( header->sortIndicator != QStyleOptionHeader::None ) {
-                    QStyleOptionHeader subopt = *header;
-                    const int w = qMin( painter->fontMetrics().horizontalAdvance( header->text ) / 2, 6 );
-                    if ( option->direction == Qt::RightToLeft )
-                        subopt.rect = QRect( header->rect.right() - ( header->rect.width() - header->rect.width() / 4 ),
-                            header->rect.top(), w, header->rect.height() );
-                    else
-                        subopt.rect = QRect( header->rect.left() + header->rect.width() - header->rect.width() / 4,
-                            header->rect.top(), w, header->rect.height() );
-                    subopt.rect = visualRect( option->direction, option->rect, subopt.rect );
-                    subopt.state |= ( header->sortIndicator == QStyleOptionHeader::SortUp )
-                        ? State_UpArrow : State_DownArrow;
-                    drawPrimitive( PE_IndicatorHeaderArrow, &subopt, painter, widget );
+                    subopt.rect = subElementRect( SE_HeaderArrow, option, widget );
+                    if ( subopt.rect.isValid() )
+                        drawPrimitive( PE_IndicatorHeaderArrow, &subopt, painter, widget );
                 }
+                painter->setClipRegion( clipRegion );
+                return;
             }
+            break;
+
+        case CE_HeaderSection:
+            // Only the section face. Sort indicator is drawn by CE_Header via
+            // SE_HeaderArrow → PE_IndicatorHeaderArrow.
+            drawXPHeaderSection( painter, option );
             return;
-        }
 
         case CE_TabBarTab:
             // QCommonStyle would draw shape+label on itself, bypassing the
@@ -2787,6 +2988,43 @@ void WinXPStyle::drawComplexControl( ComplexControl control, const QStyleOptionC
             }
             return;
         }
+
+        case CC_GroupBox:
+            if ( const QStyleOptionGroupBox* groupBox = qstyleoption_cast<const QStyleOptionGroupBox*>( option ) ) {
+                if ( groupBox->subControls & SC_GroupBoxCheckBox ) {
+                    QStyleOptionButton box;
+                    box.QStyleOption::operator=( *groupBox );
+                    box.rect = subControlRect( CC_GroupBox, option, SC_GroupBoxCheckBox, widget );
+                    drawPrimitive( PE_IndicatorCheckBox, &box, painter, widget );
+                }
+                if ( groupBox->subControls & SC_GroupBoxFrame ) {
+                    QStyleOptionFrame frame;
+                    frame.QStyleOption::operator=( *groupBox );
+                    frame.features = groupBox->features;
+                    frame.lineWidth = groupBox->lineWidth;
+                    frame.midLineWidth = groupBox->midLineWidth;
+                    frame.rect = subControlRect( CC_GroupBox, option, SC_GroupBoxFrame, widget );
+                    drawPrimitive( PE_FrameGroupBox, &frame, painter, widget );
+                }
+                if ( ( groupBox->subControls & SC_GroupBoxLabel ) && !groupBox->text.isEmpty() ) {
+                    QRect textRect = subControlRect( CC_GroupBox, option, SC_GroupBoxLabel, widget );
+                    if ( textRect.isValid() ) {
+                        // Erase the frame where the title sits, then paint the
+                        // Luna Blue title colour (#0046D5 from property sheets).
+                        painter->fillRect( textRect.adjusted( -2, 0, 2, 0 ), option->palette.window() );
+                        QPalette pal = groupBox->palette;
+                        if ( m_forceClassicPalette || m_mode == Blue )
+                            pal.setColor( QPalette::WindowText, QColor( 0x00, 0x46, 0xd5 ) );
+                        int alignment = int( groupBox->textAlignment ) | Qt::TextShowMnemonic;
+                        if ( !styleHint( SH_UnderlineShortcut, option, widget ) )
+                            alignment |= Qt::TextHideMnemonic;
+                        drawItemText( painter, textRect, alignment | Qt::AlignVCenter, pal,
+                            groupBox->state & State_Enabled, groupBox->text, QPalette::WindowText );
+                    }
+                }
+                return;
+            }
+            break;
 
         default:
             break;

@@ -44,6 +44,7 @@
 
 #include "phasestyle.h"
 #include "bitmaps.h"
+#include "qtstyles_palette.h"
 #include "qstylehelper_p.h"
 
 // some convenient constants
@@ -74,11 +75,12 @@ static const double PI           = 3.14159265359;
 // -----------
 // Constructor
 
-PhaseStyle::PhaseStyle()
+PhaseStyle::PhaseStyle(bool forceClassicPalette)
     // The original Qt 4 style inherited QWindowsStyle. That class is no
     // longer part of Qt 6's public API, but the "Windows" factory key still
     // instantiates it, so delegate to it like the other plugin styles.
-    : QProxyStyle(QStyleFactory::create(QStringLiteral("Windows")))
+    : QProxyStyle(QStyleFactory::create(QStringLiteral("Windows"))),
+      m_forceClassicPalette(forceClassicPalette)
 {
     // Drive the busy progress bar animation from a QTimer.  A plain
     // startTimer() on this style would deliver timer events through
@@ -178,6 +180,11 @@ void PhaseStyle::polish(QWidget *widget)
 
 void PhaseStyle::polish(QPalette &pal)
 {
+    // "phase-classic" 在安装时强制套用标准配色，后续的 bevel 亮度调整基于
+    // 经典 window 色继续计算。
+    if (m_forceClassicPalette)
+        pal = standardPalette();
+
     // clear out gradients on a color change
     QPixmapCache::clear();
 
@@ -291,6 +298,7 @@ QPalette PhaseStyle::standardPalette() const
     pal.setBrush(QPalette::LinkVisited, QColor(0x52, 0x18, 0x8b));
 
     pal.setBrush(QPalette::Disabled, QPalette::Button, window);
+    pal.setBrush(QPalette::Disabled, QPalette::Window, window);
     pal.setBrush(QPalette::Disabled, QPalette::WindowText, window.darker());
     pal.setBrush(QPalette::Disabled, QPalette::Text, window.darker());
     pal.setBrush(QPalette::Disabled, QPalette::ButtonText, window.darker());
@@ -332,6 +340,11 @@ QPalette PhaseStyle::standardPalette() const
                  background.darker(120));
     pal.setColor(QPalette::Disabled, QPalette::Midlight,
                  background.lighter(110));
+
+    // 把其余 Disabled 角色补齐为 Active 组对应值，三个 ColorGroup 全部显式
+    // 填满，返回的 palette 完全自足。
+    QtStyles::completeClassicDisabled(&pal);
+    QtStyles::applyClassicAccent(&pal);
 
     return pal;
 }

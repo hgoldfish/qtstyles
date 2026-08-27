@@ -57,6 +57,8 @@ QStyle *DirtylooksStylePlugin::create(const QString &key)
 {
     if (key == "dirtylooks")
         return new DirtylooksStyle;
+    if (key == "dirtylooks-classic")
+        return new DirtylooksStyle(true);
     return 0;
 }
 

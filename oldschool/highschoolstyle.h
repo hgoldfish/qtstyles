@@ -46,7 +46,7 @@ class HighschoolStyle : public OldschoolStyle
     Q_OBJECT
 
 public:
-    explicit HighschoolStyle(bool useHighlightCols = false);
+    explicit HighschoolStyle(bool useHighlightCols = false, bool forceClassicPalette = false);
     ~HighschoolStyle() override;
 
     void drawPrimitive(PrimitiveElement pe, const QStyleOption *opt, QPainter *p,

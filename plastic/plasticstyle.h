@@ -44,15 +44,41 @@
 
 #include <QtWidgets/qproxystyle.h>
 #include <QtCore/qelapsedtimer.h>
+#include <QtCore/qhash.h>
+#include <QtCore/qrect.h>
 
 class QProgressBar;
+
+// 悬停动画的状态键：控件 + 元素矩形（空矩形表示整个控件）。
+struct PlasticStyleHoverKey
+{
+    const QWidget *widget;
+    QRect rect;
+};
+
+inline bool operator==(const PlasticStyleHoverKey &a, const PlasticStyleHoverKey &b)
+{
+    return a.widget == b.widget && a.rect == b.rect;
+}
+
+inline uint qHash(const PlasticStyleHoverKey &key, uint seed)
+{
+    uint h = qHash(key.widget, seed);
+    h = h ^ qHash(key.rect.x(), seed);
+    h = h ^ qHash(key.rect.y(), seed);
+    h = h ^ qHash(key.rect.width(), seed);
+    h = h ^ qHash(key.rect.height(), seed);
+    return h;
+}
 
 class PlasticStyle : public QProxyStyle
 {
     Q_OBJECT
 
 public:
-    PlasticStyle();
+    // 当 forceClassicPalette 为 true 时（对应 "plastic-classic" 键），样式
+    // 安装时通过 polish(QPalette&) 强制套用 standardPalette() 的经典配色。
+    explicit PlasticStyle(bool forceClassicPalette = false);
     ~PlasticStyle();
 
     void drawPrimitive(PrimitiveElement element, const QStyleOption *option,
@@ -105,6 +131,28 @@ private:
     QList<QProgressBar *> bars;
     int progressBarAnimateTimer;
     QElapsedTimer timer;
+
+    // 悬停动画：为菜单项、菜单栏项和工具按钮提供平滑的进入/离开过渡。
+    // 以 (控件, 元素矩形) 为键：菜单项/菜单栏项按各自的矩形独立过渡，
+    // 空矩形表示整个控件（如 QToolButton）。
+    struct HoverAnimation {
+        qreal value = 0.0;   // 当前动画值 0.0 .. 1.0
+        bool hovering = false; // 目标状态：进入(true) / 离开(false)
+    };
+    mutable QHash<PlasticStyleHoverKey, HoverAnimation> hoverAnimations;
+    int hoverAnimateTimer;
+    QElapsedTimer hoverTimer;
+    int lastHoverTick;
+
+    qreal hoverValue(const QWidget *widget, const QRect &rect, qreal fallback) const;
+    bool hasHoverAnimation(const QWidget *widget, const QRect &rect = QRect()) const;
+    void startHoverAnimation(const QWidget *widget, const QRect &rect = QRect());
+    void stopHoverAnimation(const QWidget *widget);
+    void removeHoverAnimations(const QWidget *widget);
+    void ensureHoverTimer();
+    void advanceHoverAnimations();
+
+    bool m_forceClassicPalette;
 };
 
 #endif // PlasticStyle_H

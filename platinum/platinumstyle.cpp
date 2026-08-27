@@ -41,9 +41,20 @@
 #include <QtCore/qcoreevent.h>
 #include <QtCore/qrect.h>
 #include <QtCore/qsize.h>
+#include <QtCore/qtimer.h>
 
 #include <chrono>
 #include <climits>
+
+// Qt 6 renamed QStyleOptionMenuItem::tabWidth to reservedShortcutWidth.
+static inline int menuItemTabWidth(const QStyleOptionMenuItem *mi)
+{
+#if QT_VERSION >= QT_VERSION_CHECK(6, 0, 0)
+    return mi->reservedShortcutWidth;
+#else
+    return mi->tabWidth;
+#endif
+}
 
 // 单调毫秒时钟。busy 动画的扫动相位由它算出：wall-clock 的
 // msecsSinceStartOfDay 在午夜回绕会让相位在午夜跳变；单调钟没有这个问题。
@@ -53,9 +64,15 @@ static qint64 steadyMs()
     return std::chrono::duration_cast<std::chrono::milliseconds>(now).count();
 }
 
-PlatinumStyle::PlatinumStyle()
-    : QProxyStyle(QStyleFactory::create(QStringLiteral("windows")))
+PlatinumStyle::PlatinumStyle(bool forceClassicPalette)
+    : QProxyStyle(QStyleFactory::create(QStringLiteral("windows"))),
+      m_forceClassicPalette(forceClassicPalette)
 {
+    // busy 动画用 QTimer 而不是 startTimer()/timerEvent() 驱动：QProxyStyle
+    // 的 event() 在 Qt 5 会把定时器事件转发给基类样式，timerEvent() 永不
+    // 被调用；QTimer 的 timeout 信号绕开 QStyle::event()，Qt 5/6 行为一致。
+    animationTimer = new QTimer(this);
+    connect(animationTimer, &QTimer::timeout, this, &PlatinumStyle::animateProgressBars);
 }
 
 PlatinumStyle::~PlatinumStyle() = default;
@@ -105,9 +122,18 @@ void PlatinumStyle::polish(QWidget *widget)
         widget->setAttribute(Qt::WA_Hover);
 
     // 事件过滤器跟踪 QProgressBar 的可见性与范围，busy（min==max）的条由
-    // timerEvent 按 animationFps 驱动重绘。与 oldschool/dirtylooks 同构。
+    // QTimer 按 animationFps 驱动重绘。
     if (qobject_cast<QProgressBar *>(widget))
         widget->installEventFilter(this);
+}
+
+void PlatinumStyle::polish(QPalette &palette)
+{
+    // "platinum-classic" 在安装时强制套用标准配色，保证与经典观感一致，
+    // 不受宿主主题影响。
+    if (m_forceClassicPalette)
+        palette = standardPalette();
+    QProxyStyle::polish(palette);
 }
 
 void PlatinumStyle::unpolish(QWidget *widget)
@@ -151,9 +177,9 @@ void PlatinumStyle::startProgressAnimation(QProgressBar *bar)
 {
     if (!animatedBars.contains(bar)) {
         animatedBars << bar;
-        if (!animateTimer) {
+        if (!animationTimer->isActive()) {
             Q_ASSERT(animationFps > 0);
-            animateTimer = startTimer(1000 / animationFps);
+            animationTimer->start(1000 / animationFps);
         }
     }
 }
@@ -162,22 +188,21 @@ void PlatinumStyle::stopProgressAnimation(QProgressBar *bar)
 {
     if (!animatedBars.isEmpty()) {
         animatedBars.removeOne(bar);
-        if (animatedBars.isEmpty() && animateTimer) {
-            killTimer(animateTimer);
-            animateTimer = 0;
-        }
+        if (animatedBars.isEmpty())
+            animationTimer->stop();
     }
 }
 
-void PlatinumStyle::timerEvent(QTimerEvent *event)
+// animateProgressBars()
+// ---------------------
+// 时钟滴答一次就让所有可见的 busy 条重绘；扫动相位在
+// drawProgressBarContents 里由单调钟算出，这里只负责触发重绘。
+void PlatinumStyle::animateProgressBars()
 {
-    if (event->timerId() == animateTimer) {
-        for (QProgressBar *bar : animatedBars) {
-            if (bar->isVisible())
-                bar->update();
-        }
+    for (QProgressBar *bar : animatedBars) {
+        if (bar->isVisible())
+            bar->update();
     }
-    QProxyStyle::timerEvent(event);
 }
 
 void PlatinumStyle::drawPrimitive(PrimitiveElement element, const QStyleOption *option,
@@ -215,12 +240,12 @@ void PlatinumStyle::drawPrimitive(PrimitiveElement element, const QStyleOption *
         return;
     }
     case PE_IndicatorProgressChunk: {
-        // Qt 3 QCommonStyle::drawPrimitive(PE_ProgressBarChunk): each chunk
-        // is the Highlight fill inset 3 px top/bottom and 2 px right, so
-        // the groove background shows between the blocks.
+        // Appearance Manager: progress indicators take the accent/variation
+        // color (same family as scroll thumbs), inset 3 px top/bottom and
+        // 2 px right so the groove shows between blocks.
         const QRect r = option->rect;
         painter->fillRect(r.x(), r.y() + 3, r.width() - 2, r.height() - 6,
-                          option->palette.brush(QPalette::Highlight));
+                          accentColor(option->palette));
         return;
     }
     case PE_IndicatorArrowUp:
@@ -229,8 +254,35 @@ void PlatinumStyle::drawPrimitive(PrimitiveElement element, const QStyleOption *
     case PE_IndicatorArrowRight: {
         // Qt 3 QWindowsStyle PE_Arrow*: the three-line arrow used by spin
         // boxes, tool buttons and menu indicators as well.
-        const QColor text = option->palette.color(QPalette::ButtonText);
-        drawArrow(painter, element, option->rect, text, text);
+        drawArrowGlyph(painter, element, option->rect, option->palette,
+                       option->state & State_Enabled,
+                       option->palette.color(QPalette::ButtonText));
+        return;
+    }
+    case PE_IndicatorHeaderArrow: {
+        // Mac OS 9 list headers use a small filled triangle, not the large
+        // Windows three-line glyph. Qt maps SortUp → tip down, SortDown → tip up.
+        const QStyleOptionHeader *header =
+            qstyleoption_cast<const QStyleOptionHeader *>(option);
+        if (!header || header->sortIndicator == QStyleOptionHeader::None)
+            return;
+        const bool tipDown = header->sortIndicator == QStyleOptionHeader::SortUp;
+        const QRect r = option->rect;
+        const int cx = r.x() + r.width() / 2;
+        const int cy = r.y() + r.height() / 2;
+        QPolygon tri;
+        if (tipDown) {
+            tri << QPoint(cx - 3, cy - 2) << QPoint(cx + 3, cy - 2)
+                << QPoint(cx, cy + 2);
+        } else {
+            tri << QPoint(cx - 3, cy + 2) << QPoint(cx + 3, cy + 2)
+                << QPoint(cx, cy - 2);
+        }
+        painter->save();
+        painter->setPen(Qt::NoPen);
+        painter->setBrush(option->palette.color(QPalette::ButtonText));
+        painter->drawPolygon(tri);
+        painter->restore();
         return;
     }
     case PE_FrameFocusRect: {
@@ -241,6 +293,101 @@ void PlatinumStyle::drawPrimitive(PrimitiveElement element, const QStyleOption *
         // Qt 3 has no separate tab bar base line: the bottom edge of every
         // tab is drawn by CE_TabBarTabShape, and the selected tab covers it
         // with the window color. The Qt 6 base line would double the bevel.
+        return;
+    }
+    case PE_PanelMenuBar: {
+        // Flat Button face with a 1 px Dark bottom edge.
+        const QRect r = option->rect;
+        painter->fillRect(r, option->palette.brush(QPalette::Button));
+        painter->setPen(option->palette.color(QPalette::Dark));
+        painter->drawLine(r.bottomLeft(), r.bottomRight());
+        return;
+    }
+    case PE_PanelToolBar: {
+        // Light leading edge + Dark trailing edge (horizontal or vertical).
+        const QRect r = option->rect;
+        painter->fillRect(r, option->palette.brush(QPalette::Button));
+        painter->setPen(option->palette.color(QPalette::Light));
+        if (option->state & State_Horizontal) {
+            painter->drawLine(r.topLeft(), r.topRight());
+            painter->setPen(option->palette.color(QPalette::Dark));
+            painter->drawLine(r.bottomLeft(), r.bottomRight());
+        } else {
+            painter->drawLine(r.topLeft(), r.bottomLeft());
+            painter->setPen(option->palette.color(QPalette::Dark));
+            painter->drawLine(r.topRight(), r.bottomRight());
+        }
+        return;
+    }
+    case PE_IndicatorToolBarHandle: {
+        // Same riffle texture as scroll thumbs; orientation is inverted
+        // relative to CE_ScrollBarSlider because a horizontal toolbar's
+        // handle is a vertical strip decorated with horizontal lines.
+        const QRect r = option->rect.adjusted(2, 2, -2, -2);
+        painter->fillRect(option->rect, option->palette.brush(QPalette::Button));
+        drawRiffles(painter, r, option->palette,
+                    !(option->state & State_Horizontal));
+        return;
+    }
+    case PE_IndicatorToolBarSeparator: {
+        // Mac OS 8 HIG separator: 2 px engraved line (Dark + Light).
+        const QRect r = option->rect;
+        painter->save();
+        if (option->state & State_Horizontal) {
+            const int x = r.center().x();
+            painter->setPen(option->palette.color(QPalette::Dark));
+            painter->drawLine(x, r.top() + 3, x, r.bottom() - 3);
+            painter->setPen(option->palette.color(QPalette::Light));
+            painter->drawLine(x + 1, r.top() + 3, x + 1, r.bottom() - 3);
+        } else {
+            const int y = r.center().y();
+            painter->setPen(option->palette.color(QPalette::Dark));
+            painter->drawLine(r.left() + 3, y, r.right() - 3, y);
+            painter->setPen(option->palette.color(QPalette::Light));
+            painter->drawLine(r.left() + 3, y + 1, r.right() - 3, y + 1);
+        }
+        painter->restore();
+        return;
+    }
+    case PE_IndicatorBranch: {
+        drawBranch(painter, option);
+        return;
+    }
+    case PE_FrameGroupBox: {
+        // Mac OS primary group box: raised 2 px frame (Light/Midlight TL,
+        // Mid/Dark BR). Secondary groups are not distinguished here.
+        const QRect r = option->rect;
+        const QPalette &pal = option->palette;
+        painter->save();
+        painter->setPen(pal.color(QPalette::Light));
+        painter->drawLine(r.left(), r.top(), r.right(), r.top());
+        painter->drawLine(r.left(), r.top(), r.left(), r.bottom());
+        painter->setPen(pal.color(QPalette::Midlight));
+        painter->drawLine(r.left() + 1, r.top() + 1, r.right() - 1, r.top() + 1);
+        painter->drawLine(r.left() + 1, r.top() + 1, r.left() + 1, r.bottom() - 1);
+        painter->setPen(pal.color(QPalette::Dark));
+        painter->drawLine(r.left(), r.bottom(), r.right(), r.bottom());
+        painter->drawLine(r.right(), r.top(), r.right(), r.bottom());
+        painter->setPen(pal.color(QPalette::Mid));
+        painter->drawLine(r.left() + 1, r.bottom() - 1, r.right() - 1, r.bottom() - 1);
+        painter->drawLine(r.right() - 1, r.top() + 1, r.right() - 1, r.bottom() - 1);
+        painter->restore();
+        return;
+    }
+    case PE_FrameMenu:
+    case PE_PanelMenu: {
+        // Raised Button face + Shadow outline — classic Platinum popup.
+        const QRect r = option->rect;
+        painter->fillRect(r, option->palette.brush(QPalette::Button));
+        painter->setPen(option->palette.color(QPalette::Light));
+        painter->drawLine(r.topLeft(), r.topRight());
+        painter->drawLine(r.topLeft(), r.bottomLeft());
+        painter->setPen(option->palette.color(QPalette::Shadow));
+        painter->drawLine(r.bottomLeft(), r.bottomRight());
+        painter->drawLine(r.topRight(), r.bottomRight());
+        painter->setPen(option->palette.color(QPalette::Mid));
+        painter->drawLine(r.left() + 1, r.bottom() - 1, r.right() - 1, r.bottom() - 1);
+        painter->drawLine(r.right() - 1, r.top() + 1, r.right() - 1, r.bottom() - 1);
         return;
     }
     default:
@@ -254,10 +401,31 @@ void PlatinumStyle::drawControl(ControlElement element, const QStyleOption *opti
 {
     switch (element) {
     case CE_HeaderSection: {
-        // Qt 3 PE_HeaderSection: the sunken flag is dropped so header
-        // sections are drawn as raised bevels.
-        drawBevel(painter, option->rect, option->palette, false,
-                  QBrush(option->palette.color(QPalette::Button)));
+        // Mac OS 9 list headers are flatter than command bevels: Button face
+        // with a single-pixel Light/Dark frame (pressed inverts the edges).
+        // drawBevel's 2–3 px ramp looks chunky on short header strips.
+        const QRect r = option->rect;
+        const QPalette &pal = option->palette;
+        const bool sunken = option->state & State_Sunken;
+        painter->fillRect(r, pal.brush(QPalette::Button));
+        painter->setPen(sunken ? pal.color(QPalette::Dark) : pal.color(QPalette::Light));
+        painter->drawLine(r.topLeft(), r.topRight());
+        painter->drawLine(r.topLeft(), r.bottomLeft());
+        painter->setPen(sunken ? pal.color(QPalette::Light) : pal.color(QPalette::Dark));
+        painter->drawLine(r.bottomLeft(), r.bottomRight());
+        painter->drawLine(r.topRight(), r.bottomRight());
+        return;
+    }
+    case CE_HeaderEmptyArea: {
+        // Match section chrome on the shared horizontal edges; skip the
+        // verticals so we don't fight the last section's Dark right edge.
+        const QRect r = option->rect;
+        const QPalette &pal = option->palette;
+        painter->fillRect(r, pal.brush(QPalette::Button));
+        painter->setPen(pal.color(QPalette::Light));
+        painter->drawLine(r.topLeft(), r.topRight());
+        painter->setPen(pal.color(QPalette::Dark));
+        painter->drawLine(r.bottomLeft(), r.bottomRight());
         return;
     }
     case CE_PushButton: {
@@ -323,20 +491,18 @@ void PlatinumStyle::drawControl(ControlElement element, const QStyleOption *opti
                 drawPrimitive(PE_FrameFocusRect, &focus, painter, widget);
             }
             if (btn->features & QStyleOptionButton::HasMenu) {
-                // Qt 3 CE_PushButtonLabel: a three-color separator left of
-                // the menu arrow, hidden while the button is pressed.
-                if (!(down || on)) {
-                    const int dx = pixelMetric(PM_MenuButtonIndicator, btn, widget);
-                    const int xx = r.right() - dx - 4;
-                    const int yy = r.y() - 3;
-                    const int hh = r.height() + 6;
-                    painter->setPen(btn->palette.color(QPalette::Mid));
-                    painter->drawLine(xx, yy + 2, xx, yy + hh - 3);
-                    painter->setPen(btn->palette.color(QPalette::Button));
-                    painter->drawLine(xx + 1, yy + 1, xx + 1, yy + hh - 2);
-                    painter->setPen(btn->palette.color(QPalette::Light));
-                    painter->drawLine(xx + 2, yy + 2, xx + 2, yy + hh - 2);
-                }
+                // Qt 3 CE_PushButtonLabel: the menu indicator (a down arrow)
+                // sits on the right side of the button, merged with the face
+                // rather than framed as a separate button.
+                const int dx = pixelMetric(PM_MenuButtonIndicator, btn, widget);
+                // A pressed/checked face is Dark, so the arrow flips to
+                // bright text like CE_PushButtonLabel does.
+                const QColor arrowColor = (down || on)
+                    ? btn->palette.color(QPalette::BrightText)
+                    : btn->palette.color(QPalette::ButtonText);
+                drawArrowGlyph(painter, PE_IndicatorArrowDown,
+                               QRect(r.right() - dx, r.y() + 3, dx, r.height() - 6),
+                               btn->palette, btn->state & State_Enabled, arrowColor);
             }
             QProxyStyle::drawControl(CE_PushButtonLabel, btn, painter, widget);
         }
@@ -382,9 +548,10 @@ void PlatinumStyle::drawControl(ControlElement element, const QStyleOption *opti
             else
                 arrow = PE_IndicatorArrowUp;
         }
-        drawArrow(painter, arrow, r.adjusted(2, 2, -2, -2),
-                  option->palette.color(QPalette::ButtonText),
-                  option->palette.color(QPalette::ButtonText));
+        // Mac OS 8 HIG: active scroll arrows are solid black; disabled get
+        // the Qt 3 Light etch under Mid.
+        drawArrowGlyph(painter, arrow, r.adjusted(2, 2, -2, -2), option->palette,
+                       option->state & State_Enabled, QColor(Qt::black));
         return;
     }
     case CE_ScrollBarAddPage:
@@ -394,12 +561,19 @@ void PlatinumStyle::drawControl(ControlElement element, const QStyleOption *opti
         return;
     }
     case CE_ScrollBarSlider: {
-        // Qt 3 PE_ScrollBarSlider: bevel, riffles, shadow outline and a
-        // focus frame.
+        // Appearance Manager: the scroll indicator takes the accent/
+        // variation color, with Light/Dark riffles on top.
         const QRect r = option->rect;
-        drawBevel(painter, r, option->palette, false,
-                  QBrush(option->palette.color(QPalette::Button)));
-        drawRiffles(painter, r, option->palette, option->state & State_Horizontal);
+        const QColor accent = accentColor(option->palette);
+        QPalette face = option->palette;
+        face.setColor(QPalette::Button, accent);
+        face.setColor(QPalette::Light, accent.lighter(135));
+        face.setColor(QPalette::Midlight, accent.lighter(120));
+        face.setColor(QPalette::Mid, accent.darker(115));
+        face.setColor(QPalette::Dark, accent.darker(130));
+        drawBevel(painter, r, face, false, QBrush(accent));
+        drawRiffles(painter, r, accent.lighter(160), accent.darker(140),
+                    option->state & State_Horizontal);
         painter->setPen(option->palette.color(QPalette::Shadow));
         painter->setBrush(Qt::NoBrush);
         painter->drawRect(r);
@@ -445,8 +619,6 @@ void PlatinumStyle::drawControl(ControlElement element, const QStyleOption *opti
                     painter->setPen(pal.light().color());
                 } else {
                     painter->setPen(pal.light().color());
-                    r2.setRect(r2.left() + 2, r2.top() + 2, r2.width() - 4,
-                               r2.height() - 2);
                 }
 
                 int x1 = r2.left();
@@ -500,8 +672,6 @@ void PlatinumStyle::drawControl(ControlElement element, const QStyleOption *opti
                         painter->drawPoint(r2.right(), r2.top());
                     painter->setPen(pal.dark().color());
                     painter->drawLine(r2.left(), r2.top(), r2.right() - 1, r2.top());
-                    r2.setRect(r2.left() + 2, r2.top(), r2.width() - 4,
-                               r2.height() - 2);
                 }
 
                 painter->drawLine(r2.right() - 1, r2.top() + (selected ? 0 : 2),
@@ -559,8 +729,6 @@ void PlatinumStyle::drawControl(ControlElement element, const QStyleOption *opti
                     painter->setPen(pal.light().color());
                 } else {
                     painter->setPen(pal.light().color());
-                    r2.setRect(r.left() + 2, r.top() + 2, r.width() - 4,
-                               r.height() - 2);
                 }
 
                 const int y1 = r2.top();
@@ -599,6 +767,139 @@ void PlatinumStyle::drawControl(ControlElement element, const QStyleOption *opti
         }
         break;
     }
+    case CE_DockWidgetTitle: {
+        drawDockWidgetTitle(painter, option);
+        return;
+    }
+    case CE_SizeGrip: {
+        drawSizeGrip(painter, option);
+        return;
+    }
+    case CE_Splitter: {
+        // Mid face with centered riffles (same grip texture as scroll thumbs).
+        const QRect r = option->rect;
+        painter->fillRect(r, option->palette.brush(QPalette::Mid));
+        drawRiffles(painter, r.adjusted(1, 1, -1, -1), option->palette,
+                    !(option->state & State_Horizontal));
+        return;
+    }
+    case CE_MenuBarEmptyArea: {
+        drawPrimitive(PE_PanelMenuBar, option, painter, widget);
+        return;
+    }
+    case CE_MenuBarItem: {
+        if (const QStyleOptionMenuItem *mi =
+                qstyleoption_cast<const QStyleOptionMenuItem *>(option)) {
+            const bool selected = mi->state & (State_Selected | State_Sunken);
+            if (selected) {
+                // Active menu title: sunken Mid bevel, like a pressed Mac
+                // menu bar item. Text stays ButtonText (black on Mid).
+                drawBevel(painter, mi->rect, mi->palette, true,
+                          QBrush(mi->palette.color(QPalette::Mid)));
+            } else {
+                // Items are shorter than the bar (VMargin). Painting
+                // PE_PanelMenuBar here would put a Dark edge on the item
+                // bottom *and* EmptyArea would put another on the bar
+                // bottom — a double rule. Face only; EmptyArea owns the
+                // single Dark baseline (it also fills the margin strips).
+                painter->fillRect(mi->rect, mi->palette.brush(QPalette::Button));
+            }
+            drawItemText(painter, mi->rect, Qt::AlignCenter | Qt::TextShowMnemonic,
+                         mi->palette, mi->state & State_Enabled, mi->text,
+                         QPalette::ButtonText);
+        }
+        return;
+    }
+    case CE_MenuItem: {
+        if (const QStyleOptionMenuItem *mi =
+                qstyleoption_cast<const QStyleOptionMenuItem *>(option)) {
+            const QRect r = mi->rect;
+            const QPalette &pal = mi->palette;
+            if (mi->menuItemType == QStyleOptionMenuItem::Separator) {
+                const int y = r.center().y();
+                painter->setPen(pal.color(QPalette::Dark));
+                painter->drawLine(r.left() + 2, y, r.right() - 2, y);
+                painter->setPen(pal.color(QPalette::Light));
+                painter->drawLine(r.left() + 2, y + 1, r.right() - 2, y + 1);
+                return;
+            }
+            const bool selected = (mi->state & State_Selected) && (mi->state & State_Enabled);
+            if (selected)
+                painter->fillRect(r, accentColor(pal));
+            else
+                painter->fillRect(r, pal.brush(QPalette::Button));
+
+            const int checkCol = qMax(mi->maxIconWidth, 16);
+            QRect checkRect(r.x() + 2, r.y() + 1, checkCol, r.height() - 2);
+            if (!mi->icon.isNull()) {
+                const QIcon::Mode mode = !(mi->state & State_Enabled) ? QIcon::Disabled
+                    : (selected ? QIcon::Active : QIcon::Normal);
+                const int smallIconSize = pixelMetric(PM_SmallIconSize, mi, widget);
+                const QSize iconSize(smallIconSize, smallIconSize);
+#if QT_VERSION >= QT_VERSION_CHECK(6, 0, 0)
+                const QPixmap pm = mi->icon.pixmap(iconSize, QStyleHelper::getDpr(painter), mode,
+                                                   mi->checked ? QIcon::On : QIcon::Off);
+#else
+                const QPixmap pm = mi->icon.pixmap(iconSize, mode,
+                                                   mi->checked ? QIcon::On : QIcon::Off);
+#endif
+                QRect ir(0, 0, pm.width() / pm.devicePixelRatio(),
+                         pm.height() / pm.devicePixelRatio());
+                ir.moveCenter(checkRect.center());
+                painter->drawPixmap(ir.topLeft(), pm);
+            } else if (mi->checked
+                       && mi->checkType != QStyleOptionMenuItem::NotCheckable) {
+                // drawCheckMark is a fixed 13×13 glyph — center it in the column.
+                QRect mark(0, 0, 13, 13);
+                mark.moveCenter(checkRect.center());
+                drawCheckMark(painter, mark,
+                              selected ? pal.color(QPalette::HighlightedText)
+                                       : pal.color(QPalette::Text),
+                              selected ? accentColor(pal).darker(120)
+                                       : pal.color(QPalette::Dark));
+            }
+
+            const int tab = menuItemTabWidth(mi);
+            const bool hasSubMenu = mi->menuItemType == QStyleOptionMenuItem::SubMenu;
+            const int arrowSpace = hasSubMenu ? 12 : 0;
+            const int rightReserve = 8 + (tab > 0 ? tab : 0) + arrowSpace;
+            QRect textRect = r.adjusted(checkCol + 6, 1, -rightReserve, -1);
+            int flags = Qt::AlignVCenter | Qt::TextShowMnemonic | Qt::TextDontClip
+                | Qt::TextSingleLine;
+            if (!styleHint(SH_UnderlineShortcut, mi, widget))
+                flags |= Qt::TextHideMnemonic;
+            QString text = mi->text;
+            const int tabPos = text.indexOf(QLatin1Char('\t'));
+            const QPalette::ColorRole textRole = selected
+                ? QPalette::HighlightedText : QPalette::ButtonText;
+            if (tabPos >= 0 && tab > 0) {
+                // Shortcut strip sits left of the submenu arrow, if any.
+                const QRect shortcutRect(r.right() - arrowSpace - tab - 4, r.y(),
+                                         tab, r.height());
+                drawItemText(painter, shortcutRect, flags | Qt::AlignRight, pal,
+                             mi->state & State_Enabled, text.mid(tabPos + 1), textRole);
+                text = text.left(tabPos);
+            }
+            drawItemText(painter, textRect, flags, pal, mi->state & State_Enabled,
+                         text, textRole);
+
+            if (hasSubMenu) {
+                const QColor arrowColor = selected
+                    ? pal.color(QPalette::HighlightedText)
+                    : pal.color(QPalette::ButtonText);
+                drawArrowGlyph(painter,
+                               mi->direction == Qt::RightToLeft ? PE_IndicatorArrowLeft
+                                                                : PE_IndicatorArrowRight,
+                               QRect(r.right() - 12, r.y() + 2, 10, r.height() - 4),
+                               pal, mi->state & State_Enabled, arrowColor);
+            }
+        }
+        return;
+    }
+    case CE_ToolBar: {
+        drawPrimitive(PE_PanelToolBar, option, painter, widget);
+        return;
+    }
     default:
         break;
     }
@@ -610,8 +911,9 @@ void PlatinumStyle::drawProgressBarContents(QPainter *painter,
                                             const QWidget *widget) const
 {
     // Qt 3 CE_ProgressBarContents, busy branch: a bar with no steps shows a
-    // single 4-pixel highlight line sweeping back and forth across the
-    // trough, instead of the Qt 6 chunk animation.
+    // string of highlight chunks (the same dotted-block style as the
+    // deterministic chunk grid) sweeping back and forth across the trough,
+    // instead of the Qt 6 chunk animation.
     if (pb->minimum == 0 && pb->maximum == 0) {
         const bool vertical = !(pb->state & QStyle::State_Horizontal);
         QRect rect = pb->rect;
@@ -626,20 +928,32 @@ void PlatinumStyle::drawProgressBarContents(QPainter *painter,
             reverse = !reverse;
 
         // 扫动相位由单调钟驱动（2400ms 一个完整来回），与 bluecurve 一致。
-        // 动画本身由 timerEvent 负责触发重绘，这里只算位置。
+        // 动画本身由 QTimer 负责触发重绘，这里只算位置。
         const int t = int(steadyMs() % 2400);
 
-        const int fw = 2;
-        const int w = rect.width() - 2 * fw;
-        int x = (t * w * 2 / 2400) % (w * 2);
-        if (x > w)
-            x = 2 * w - x;
-        x = reverse ? rect.right() - x : x + rect.x();
+        // 与正常进度条的 chunk 网格同款：每块宽 PM_ProgressBarChunkWidth、
+        // 高内缩 3px、块间留 2px 缝。整串整体滑动。
+        const int cw = pixelMetric(PM_ProgressBarChunkWidth, pb, widget);
+        const int gap = 2;
+        // 串宽取槽宽的 1/4（至少 1 块），但绝不超槽宽，否则超窄条会溢出。
+        const int maxBlocks = qMax(1, (rect.width() + gap) / (cw + gap));
+        const int n = qMin(maxBlocks, qMax(1, rect.width() / 4 / (cw + gap)));
+        const int sw = n * cw + (n - 1) * gap;
+        const int remains = qMax(rect.width() - sw, 1);
+        const int period = 2400;
+        int x = (t < period / 2) ? t * remains / (period / 2)
+                                 : (period - t) * remains / (period / 2);
+        x = reverse ? rect.right() - x - sw : x + rect.x();
 
         painter->save();
         painter->setTransform(m, true);
-        painter->setPen(QPen(pb->palette.highlight(), 4));
-        painter->drawLine(x, rect.y() + 1, x, rect.height() - fw);
+        painter->setBrush(accentColor(pb->palette));
+        painter->setPen(Qt::NoPen);
+        for (int i = 0; i < n; ++i) {
+            const int cx = x + i * (cw + gap);
+            // 与 PE_IndicatorProgressChunk 同款：上下内缩 3px、右侧留 2px。
+            painter->drawRect(cx, rect.y() + 3, cw - 2, rect.height() - 6);
+        }
         painter->restore();
         return;
     }
@@ -653,6 +967,10 @@ void PlatinumStyle::drawProgressBarContents(QPainter *painter,
 void PlatinumStyle::drawComplexControl(ComplexControl control, const QStyleOptionComplex *option,
                                        QPainter *painter, const QWidget *widget) const
 {
+    if (control == CC_GroupBox) {
+        drawGroupBox(painter, option, widget);
+        return;
+    }
     if (control == CC_ComboBox) {
         if (const QStyleOptionComboBox *cmb = qstyleoption_cast<const QStyleOptionComboBox *>(option)) {
             const QRect r = cmb->rect;
@@ -873,8 +1191,10 @@ void PlatinumStyle::drawComplexControl(ComplexControl control, const QStyleOptio
             if (slider->subControls & SC_SliderHandle) {
                 const QRect handle = subControlRect(CC_Slider, slider, SC_SliderHandle, widget);
                 if (handle.isValid()) {
-                    // Qt 3 hexagonal handle with a shadow outline, a light
-                    // top-left highlight and riffles in the middle.
+                    // Accent-colored hexagonal handle (Appearance Manager
+                    // variation), shadow outline, light top-left highlight,
+                    // riffles in the middle.
+                    const QColor accent = accentColor(pal);
                     const int x1 = handle.x(), y1 = handle.y();
                     const int x2 = handle.x() + handle.width() - 1;
                     const int y2 = handle.y() + handle.height() - 1;
@@ -888,7 +1208,7 @@ void PlatinumStyle::drawComplexControl(ComplexControl control, const QStyleOptio
                             << QPoint(x2 - mx + 1, y2 - 1) << QPoint(x1 + mx - 1, y2 - 1)
                             << QPoint(x1 + 1, y2 - mx + 2) << QPoint(x1 + 1, y1 + 1);
                         painter->setPen(Qt::NoPen);
-                        painter->setBrush(pal.color(QPalette::Button));
+                        painter->setBrush(accent);
                         painter->drawPolygon(hex);
                         painter->setPen(pal.color(QPalette::Shadow));
                         painter->drawLine(x1 + 1, y1, x2 - 1, y1);
@@ -897,10 +1217,10 @@ void PlatinumStyle::drawComplexControl(ComplexControl control, const QStyleOptio
                         painter->drawLine(x1 + mx - 2, y2, x1 + mx + 2, y2);
                         painter->drawLine(x1, y1 + 1, x1, y2 - mx + 2);
                         painter->drawLine(x2, y1 + 1, x2, y2 - mx + 2);
-                        painter->setPen(pal.color(QPalette::Light));
+                        painter->setPen(accent.lighter(150));
                         painter->drawLine(x1 + 1, y1 + 1, x2 - 1, y1 + 1);
                         painter->drawLine(x1 + 1, y1 + 1, x1 + 1, y2 - mx + 2);
-                        painter->setPen(pal.color(QPalette::Dark));
+                        painter->setPen(accent.darker(130));
                         painter->drawLine(x2 - 1, y1 + 1, x2 - 1, y2 - mx + 2);
                         painter->drawLine(x1 + 1, y2 - mx + 2, x1 + mx - 2, y2 - 1);
                         painter->drawLine(x2 - 1, y2 - mx + 2, x1 + mx + 2, y2 - 1);
@@ -908,14 +1228,14 @@ void PlatinumStyle::drawComplexControl(ComplexControl control, const QStyleOptio
                         drawRiffles(painter,
                                     QRect(handle.x() + 2, handle.y(), handle.width() - 4,
                                           handle.height() - 5),
-                                    pal, false);
+                                    accent.lighter(160), accent.darker(140), false);
                     } else {
                         QPolygon hex;
                         hex << QPoint(x1 + 1, y1 + 1) << QPoint(x2 - my + 2, y1 + 1)
                             << QPoint(x2 - 1, y1 + my - 1) << QPoint(x2 - 1, y2 - my + 1)
                             << QPoint(x2 - my + 2, y2 - 1) << QPoint(x1 + 1, y2 - 1);
                         painter->setPen(Qt::NoPen);
-                        painter->setBrush(pal.color(QPalette::Button));
+                        painter->setBrush(accent);
                         painter->drawPolygon(hex);
                         painter->setPen(pal.color(QPalette::Shadow));
                         painter->drawLine(x1, y1 + 1, x1, y2 - 1);
@@ -924,18 +1244,18 @@ void PlatinumStyle::drawComplexControl(ComplexControl control, const QStyleOptio
                         painter->drawLine(x2, y1 + my - 2, x2, y1 + my + 2);
                         painter->drawLine(x1 + 1, y1, x2 - my + 2, y1);
                         painter->drawLine(x1 + 1, y2, x2 - my + 2, y2);
-                        painter->setPen(pal.color(QPalette::Light));
+                        painter->setPen(accent.lighter(150));
                         painter->drawLine(x1 + 1, y1 + 2, x1 + 1, y2 - 2);
                         painter->drawLine(x1 + 1, y1 + 1, x2 - my + 2, y1 + 1);
                         painter->drawLine(x2 - my + 2, y1 + 1, x2 - 1, y1 + my - 2);
-                        painter->setPen(pal.color(QPalette::Dark));
+                        painter->setPen(accent.darker(130));
                         painter->drawLine(x2 - 1, y1 + my - 2, x2 - 1, y1 + my + 2);
                         painter->drawLine(x2 - my + 2, y2 - 1, x2 - 1, y1 + my + 2);
                         painter->drawLine(x1 + 1, y2 - 1, x2 - my + 2, y2 - 1);
                         drawRiffles(painter,
                                     QRect(handle.x(), handle.y() + 2, handle.width() - 3,
                                           handle.height() - 4),
-                                    pal, true);
+                                    accent.lighter(160), accent.darker(140), true);
                     }
                     painter->restore();
                 }
@@ -1103,6 +1423,17 @@ int PlatinumStyle::pixelMetric(PixelMetric metric, const QStyleOption *option,
         return qRound(QStyleHelper::dpiScaled(11, option));
     case PM_ScrollBarSliderMin:
         return qRound(QStyleHelper::dpiScaled(25, option));
+    case PM_HeaderMarkSize:
+        // Mac OS 9 sort mark is a compact filled triangle (~7 px).
+        return qRound(QStyleHelper::dpiScaled(9, option));
+    case PM_HeaderMargin:
+        return qRound(QStyleHelper::dpiScaled(4, option));
+    case PM_ToolBarHandleExtent:
+        return qRound(QStyleHelper::dpiScaled(10, option));
+    case PM_ToolBarSeparatorExtent:
+        return qRound(QStyleHelper::dpiScaled(8, option));
+    case PM_DockWidgetTitleBarButtonMargin:
+        return qRound(QStyleHelper::dpiScaled(2, option));
     case PM_MaximumDragDistance:
         return -1;
     default:
@@ -1431,22 +1762,29 @@ void PlatinumStyle::drawSunkenPanel(QPainter *p, const QRect &rect, const QPalet
 void PlatinumStyle::drawPlatinumFocusRect(QPainter *p, const QRect &rect,
                                           const QPalette &palette) const
 {
+    // Appearance Manager focus ring: a solid 2 px accent outline (not the
+    // Windows dashed black rect).
     if (rect.width() < 2 || rect.height() < 2)
         return;
     p->save();
-    p->setPen(QPen(palette.color(QPalette::Text), 1, Qt::DashLine));
+    p->setPen(QPen(accentColor(palette), 2));
     p->setBrush(Qt::NoBrush);
-    p->drawRect(rect);
+    p->drawRect(rect.adjusted(1, 1, -1, -1));
     p->restore();
 }
 
 void PlatinumStyle::drawRiffles(QPainter *p, const QRect &rect, const QPalette &palette,
                                 bool horizontal) const
 {
+    drawRiffles(p, rect, palette.color(QPalette::Light),
+                palette.color(QPalette::Dark), horizontal);
+}
+
+void PlatinumStyle::drawRiffles(QPainter *p, const QRect &rect, const QColor &light,
+                                const QColor &dark, bool horizontal) const
+{
     // The riffle pattern: pairs of light/dark parallel lines spaced two
     // pixels apart, clamped to a 20-pixel band in the middle of the handle.
-    const QColor light = palette.color(QPalette::Light);
-    const QColor dark = palette.color(QPalette::Dark);
     int x = rect.x(), y = rect.y(), w = rect.width(), h = rect.height();
 
     if (horizontal) {
@@ -1481,6 +1819,246 @@ void PlatinumStyle::drawRiffles(QPainter *p, const QRect &rect, const QPalette &
             for (int i = 0; i < n; ++i)
                 p->drawLine(x + 4, my + 2 * i + 1, x + w - 4, my + 2 * i + 1);
         }
+    }
+}
+
+QColor PlatinumStyle::accentColor(const QPalette &palette)
+{
+    // Appearance Manager "variation" color drives scroll thumbs, slider
+    // tabs and focus rings. Very dark Highlight (classic navy #00007b)
+    // is lifted into the periwinkle range so Light/Dark riffles stay
+    // readable — matching the default Blue variation on Mac OS 8/9.
+    const QColor h = palette.color(QPalette::Highlight);
+    if (qGray(h.rgb()) < 80)
+        return QColor(0x6c, 0x6c, 0xcc);
+    return h;
+}
+
+void PlatinumStyle::drawRacingStripes(QPainter *p, const QRect &rect,
+                                      const QPalette &palette, bool vertical) const
+{
+    // Mac OS 8/9 active title bar: alternating 1 px Light / Dark lines
+    // ("racing stripes"). Fill Light once, then stamp every other Dark
+    // line — same look as per-pixel pens, half the strokes.
+    if (rect.width() < 1 || rect.height() < 1)
+        return;
+
+    const QColor light = palette.color(QPalette::Light);
+    const QColor dark = palette.color(QPalette::Dark);
+    p->fillRect(rect, light);
+    p->setPen(dark);
+    if (vertical) {
+        for (int x = rect.left() + 1; x <= rect.right(); x += 2)
+            p->drawLine(x, rect.top(), x, rect.bottom());
+    } else {
+        for (int y = rect.top() + 1; y <= rect.bottom(); y += 2)
+            p->drawLine(rect.left(), y, rect.right(), y);
+    }
+}
+
+void PlatinumStyle::drawSizeGrip(QPainter *p, const QStyleOption *option) const
+{
+    // Mac OS grow box: four diagonal Light/Dark ridge pairs in the corner.
+    const QRect r = option->rect;
+    const QPalette &pal = option->palette;
+    const QColor light = pal.color(QPalette::Light);
+    const QColor dark = pal.color(QPalette::Dark);
+    const bool rtl = option->direction == Qt::RightToLeft;
+    const int sw = qMin(r.width(), r.height()) - 1;
+    if (sw < 3)
+        return;
+
+    p->save();
+    p->setRenderHint(QPainter::Antialiasing, false);
+    if (rtl) {
+        int x2 = r.x() + sw;
+        int y = r.bottom() - sw;
+        for (int n = 0; n < 4; ++n) {
+            p->setPen(dark);
+            p->drawLine(r.x(), y, x2, r.bottom());
+            p->setPen(light);
+            p->drawLine(r.x(), y + 1, x2 - 1, r.bottom());
+            y += 3;
+            x2 -= 3;
+        }
+    } else {
+        int x = r.right() - sw;
+        int y = r.bottom() - sw;
+        for (int n = 0; n < 4; ++n) {
+            p->setPen(dark);
+            p->drawLine(x, r.bottom(), r.right(), y);
+            p->setPen(light);
+            p->drawLine(x + 1, r.bottom(), r.right(), y + 1);
+            x += 3;
+            y += 3;
+        }
+    }
+    p->restore();
+}
+
+void PlatinumStyle::drawDockWidgetTitle(QPainter *p, const QStyleOption *option) const
+{
+    // Approximates a Mac OS 8/9 Platinum window title bar: active titles
+    // fill with racing stripes; the title text sits in a solid Button gap
+    // that interrupts the stripes. Inactive titles are a flat Button face.
+    const QStyleOptionDockWidget *dw =
+            qstyleoption_cast<const QStyleOptionDockWidget *>(option);
+    if (!dw)
+        return;
+
+    const QRect r = dw->rect;
+    const QPalette &pal = dw->palette;
+    const bool active = dw->state & State_Active;
+#if QT_VERSION >= QT_VERSION_CHECK(6, 0, 0)
+    const bool vertical = dw->verticalTitleBar;
+#else
+    const bool vertical = false;
+#endif
+
+    // Stripes already paint every pixel; only fill when inactive.
+    if (active)
+        drawRacingStripes(p, r, pal, vertical);
+    else
+        p->fillRect(r, pal.brush(QPalette::Button));
+
+    if (!dw->title.isEmpty()) {
+        // Reserve space for the close/float buttons: along the trailing
+        // edge for horizontal titles, along the bottom for vertical ones.
+        QRect textArea = r.adjusted(4, 0, -4, 0);
+        if (dw->closable)
+            textArea.adjust(0, 0, vertical ? 0 : -16, vertical ? -16 : 0);
+        if (dw->floatable)
+            textArea.adjust(0, 0, vertical ? 0 : -16, vertical ? -16 : 0);
+
+        const int textLength = vertical ? textArea.height() : textArea.width();
+        const QString text = p->fontMetrics().elidedText(dw->title, Qt::ElideRight,
+                                                         qMax(textLength, 1));
+        const QSize textSize = p->fontMetrics().size(Qt::TextShowMnemonic, text);
+
+        if (vertical) {
+            // Punch a solid gap centered in the text area, then rotate.
+            const int gapH = textSize.width() + 8;
+            const QRect gap(r.x(), textArea.center().y() - gapH / 2, r.width(), gapH);
+            p->fillRect(gap.intersected(textArea), pal.brush(QPalette::Button));
+            p->save();
+            p->translate(textArea.center());
+            p->rotate(-90);
+            const QRect vr(-textArea.height() / 2, -textArea.width() / 2,
+                           textArea.height(), textArea.width());
+            drawItemText(p, vr, Qt::AlignCenter, pal, dw->state & State_Enabled,
+                         text, QPalette::WindowText);
+            p->restore();
+        } else {
+            // Gap must share the text's center (textArea), not the full
+            // title bar — otherwise close/float buttons shift the label
+            // left while the gap stays window-centered.
+            const int gapW = textSize.width() + 12;
+            const QRect gap(textArea.center().x() - gapW / 2, r.y(), gapW, r.height());
+            p->fillRect(gap.intersected(textArea), pal.brush(QPalette::Button));
+            drawItemText(p, textArea, Qt::AlignCenter, pal,
+                         dw->state & State_Enabled, text, QPalette::WindowText);
+        }
+    }
+
+    // Bottom (or trailing) edge so the title bar reads as a raised strip.
+    p->setPen(pal.color(QPalette::Dark));
+    if (vertical)
+        p->drawLine(r.topRight(), r.bottomRight());
+    else
+        p->drawLine(r.bottomLeft(), r.bottomRight());
+}
+
+void PlatinumStyle::drawBranch(QPainter *p, const QStyleOption *option) const
+{
+    // Finder-style disclosure triangle (no Windows +/- box) plus Mid guide
+    // lines to the row / siblings.
+    const QRect r = option->rect;
+    const QPalette &pal = option->palette;
+    const int cx = r.center().x();
+    const int cy = r.center().y();
+
+    p->save();
+    p->setRenderHint(QPainter::Antialiasing, false);
+
+    int spacer = 0;
+    if (option->state & State_Children) {
+        p->setPen(Qt::NoPen);
+        p->setBrush(pal.color(QPalette::Text));
+        if (option->state & State_Open) {
+            // Pointing down.
+            p->drawPolygon(QPolygon() << QPoint(cx - 4, cy - 2)
+                                      << QPoint(cx + 4, cy - 2)
+                                      << QPoint(cx, cy + 3));
+        } else if (option->direction == Qt::RightToLeft) {
+            p->drawPolygon(QPolygon() << QPoint(cx + 2, cy - 4)
+                                      << QPoint(cx + 2, cy + 4)
+                                      << QPoint(cx - 3, cy));
+        } else {
+            // Pointing right.
+            p->drawPolygon(QPolygon() << QPoint(cx - 2, cy - 4)
+                                      << QPoint(cx - 2, cy + 4)
+                                      << QPoint(cx + 3, cy));
+        }
+        spacer = 5;
+    }
+
+    p->setPen(pal.color(QPalette::Mid));
+    if (option->state & State_Item) {
+        if (option->direction == Qt::RightToLeft)
+            p->drawLine(r.left(), cy, cx - spacer, cy);
+        else
+            p->drawLine(cx + spacer, cy, r.right(), cy);
+    }
+    if (option->state & State_Sibling)
+        p->drawLine(cx, cy + spacer, cx, r.bottom());
+    if (option->state & (State_Item | State_Sibling))
+        p->drawLine(cx, cy - spacer, cx, r.top());
+
+    p->restore();
+}
+
+void PlatinumStyle::drawGroupBox(QPainter *p, const QStyleOption *option,
+                                 const QWidget *widget) const
+{
+    const QStyleOptionGroupBox *gb = qstyleoption_cast<const QStyleOptionGroupBox *>(option);
+    if (!gb)
+        return;
+
+    QRect textRect = subControlRect(CC_GroupBox, gb, SC_GroupBoxLabel, widget);
+    QRect checkRect = subControlRect(CC_GroupBox, gb, SC_GroupBoxCheckBox, widget);
+    const bool flat = gb->features & QStyleOptionFrame::Flat;
+
+    if ((gb->subControls & SC_GroupBoxFrame) && !flat) {
+        QStyleOptionFrame frame;
+        frame.QStyleOption::operator=(*gb);
+        frame.rect = subControlRect(CC_GroupBox, gb, SC_GroupBoxFrame, widget);
+        p->save();
+        QRegion region(gb->rect);
+        const bool ltr = gb->direction == Qt::LeftToRight;
+        region -= checkRect.united(textRect).adjusted(ltr ? -4 : 0, 0, ltr ? 0 : 4, 0);
+        if (!gb->text.isEmpty() || (gb->subControls & SC_GroupBoxCheckBox))
+            p->setClipRegion(region);
+        drawPrimitive(PE_FrameGroupBox, &frame, p, widget);
+        p->restore();
+    }
+
+    if ((gb->subControls & SC_GroupBoxLabel) && !gb->text.isEmpty()) {
+        p->save();
+        const QColor textColor = gb->textColor.isValid()
+                ? gb->textColor : gb->palette.color(QPalette::WindowText);
+        p->setPen(textColor);
+        int alignment = int(gb->textAlignment);
+        if (!styleHint(SH_UnderlineShortcut, option, widget))
+            alignment |= Qt::TextHideMnemonic;
+        p->drawText(textRect, Qt::TextShowMnemonic | Qt::AlignLeft | alignment, gb->text);
+        p->restore();
+    }
+
+    if (gb->subControls & SC_GroupBoxCheckBox) {
+        QStyleOptionButton box;
+        box.QStyleOption::operator=(*gb);
+        box.rect = checkRect;
+        drawPrimitive(PE_IndicatorCheckBox, &box, p, widget);
     }
 }
 
@@ -1538,6 +2116,23 @@ void PlatinumStyle::drawArrow(QPainter *p, PrimitiveElement arrow, const QRect &
     p->restore();
 }
 
+void PlatinumStyle::drawArrowGlyph(QPainter *p, PrimitiveElement arrow, const QRect &rect,
+                                   const QPalette &palette, bool enabled,
+                                   const QColor &enabledColor) const
+{
+    // Qt 3 QWindowsStyle PE_Arrow*: disabled arrows get a Light etch one
+    // pixel down-right, then the Mid glyph on top — without that offset
+    // they look like a flat Mid smear.
+    if (enabled) {
+        drawArrow(p, arrow, rect, enabledColor, enabledColor);
+        return;
+    }
+    const QColor light = palette.color(QPalette::Light);
+    const QColor mid = palette.color(QPalette::Mid);
+    drawArrow(p, arrow, rect.translated(1, 1), light, light);
+    drawArrow(p, arrow, rect, mid, mid);
+}
+
 void PlatinumStyle::drawCheckMark(QPainter *p, const QRect &rect, const QColor &color,
                                   const QColor &shadow) const
 {
@@ -1583,7 +2178,9 @@ void PlatinumStyle::drawCheckBox(QPainter *p, const QStyleOption *option) const
     p->drawRect(bevelRect);
 
     // Qt 3 shifts the mark one pixel down/right while the box is pressed.
-    const int mx = r.x() + (down ? 1 : 0);
+    // The mark sits 1 px left of the box origin (the check is drawn from
+    // x+3 inside the mark rect, so it stays inside the bevel).
+    const int mx = r.x() - 1 + (down ? 1 : 0);
     const int my = r.y() + (down ? 1 : 0);
     const QColor mark = pal.color(QPalette::Text);
     if (on) {

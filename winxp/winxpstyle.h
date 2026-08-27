@@ -58,6 +58,12 @@ class QProgressBar;
 * The color scheme is selected with the \a mode constructor argument:
 * Blue, Silver and Olive reproduce the fixed Windows XP "Luna" palettes,
 * Classic derives the colors from the active QPalette (and is the default).
+*
+* When \a forceClassicPalette is true (the "winxp-classic" key), the style
+* forces \c standardPalette() — the authentic Luna Blue Control Panel
+* Colors — through polish(QPalette&), and draws dialog chrome to match
+* the default XP property-sheet look (beige faces, orange selected-tab
+* stripe, blue group-box titles) instead of the Office 2003 candy chrome.
 */
 class WinXPStyle : public QProxyStyle
 {
@@ -76,8 +82,10 @@ public:
 
     /**
     * Default constructor.
+    * @param forceClassicPalette when true, polish(QPalette&) installs
+    *        standardPalette() (Luna Blue) and dialog-faithful chrome is used.
     */
-    WinXPStyle( Mode mode = Classic );
+    WinXPStyle( Mode mode = Classic, bool forceClassicPalette = false );
 
     /**
     * Destructor.
@@ -198,6 +206,7 @@ public:
 
 private:
     Mode m_mode;
+    bool m_forceClassicPalette;
     ControlColors m_colors;
 
     // Busy (indeterminate) QProgressBar animation. A single QTimer advances

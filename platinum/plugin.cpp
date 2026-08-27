@@ -39,6 +39,8 @@ QStyle *PlatinumStylePlugin::create(const QString &key)
 {
     if (key.compare(QStringLiteral("platinum"), Qt::CaseInsensitive) == 0)
         return new PlatinumStyle;
+    if (key.compare(QStringLiteral("platinum-classic"), Qt::CaseInsensitive) == 0)
+        return new PlatinumStyle(true);
     return nullptr;
 }
 

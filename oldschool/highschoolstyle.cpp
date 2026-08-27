@@ -38,8 +38,8 @@ static const QColor hsCheckRedDisabled(230, 120, 120);
     default) the application palette is polished so that selected text is
     shown inverted, the Motif way.
 */
-HighschoolStyle::HighschoolStyle(bool useHighlightCols)
-    : OldschoolStyle(useHighlightCols)
+HighschoolStyle::HighschoolStyle(bool useHighlightCols, bool forceClassicPalette)
+    : OldschoolStyle(useHighlightCols, forceClassicPalette)
 {
 }
 

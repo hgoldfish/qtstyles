@@ -40,12 +40,18 @@
 ****************************************************************************/
 
 #include "plasticstyle.h"
+#include "qtstyles_palette.h"
 
 static const bool AnimateBusyProgressBar = true;
 static const bool AnimateProgressBar = false;
 // #define QPlastique_MaskButtons
 static const int ProgressBarFps = 25;
 static const int blueFrameWidth =  2;  // with of line edit focus frame
+
+// 悬停动画参数
+static const int HoverFps = 60;
+static const int HoverDurationIn = 120;   // 进入动画时长（毫秒）
+static const int HoverDurationOut = 240;  // 离开动画时长（毫秒）
 
 #include <qapplication.h>
 #include <qbitmap.h>
@@ -77,6 +83,8 @@ static const int blueFrameWidth =  2;  // with of line edit focus frame
 #include <qstyleoption.h>
 #include <qtextedit.h>
 #include <qelapsedtimer.h>
+#include <qevent.h>
+#include <qset.h>
 #include <qtoolbar.h>
 #include <qtoolbox.h>
 #include <qtoolbutton.h>
@@ -107,6 +115,15 @@ static inline quint64 paletteResolveMask(const QPalette &pal)
     return pal.resolveMask();
 #else
     return pal.resolve();
+#endif
+}
+
+static inline QPoint hoverPos(QHoverEvent *event)
+{
+#if QT_VERSION >= QT_VERSION_CHECK(6, 0, 0)
+    return event->position().toPoint();
+#else
+    return event->pos();
 #endif
 }
 
@@ -885,6 +902,70 @@ static void qt_plastique_drawShadedPanel(QPainter *painter, const QStyleOption *
     painter->setPen(oldPen);
 }
 
+// 绘制圆角渐变面板（菜单项 / 菜单栏项 / 工具按钮的高亮用）。
+// 调用方可用 painter->setOpacity() 叠加动画进度。
+static void qt_plastique_drawRoundedPanel(QPainter *painter, const QRect &rect,
+                                          const QColor &gradientStart, const QColor &gradientStop,
+                                          const QColor &border, qreal radius)
+{
+    if (rect.isEmpty())
+        return;
+    painter->save();
+    painter->setRenderHint(QPainter::Antialiasing, true);
+    QPainterPath path;
+    path.addRoundedRect(QRectF(rect), radius, radius);
+    QLinearGradient gradient(rect.topLeft(), rect.bottomLeft());
+    gradient.setColorAt(0.0, gradientStart);
+    gradient.setColorAt(1.0, gradientStop);
+    painter->fillPath(path, gradient);
+    painter->setPen(QPen(border, 0));
+    painter->drawPath(path);
+    painter->restore();
+}
+
+// 绘制工具栏/分割器把手：现代风格的圆点把手。
+// verticalHandle 为 true 表示把手是竖直条（对应水平工具栏），圆点竖排。
+static void qt_plastique_drawHandleDots(QPainter *painter, const QRect &rect,
+                                        const QColor &color, bool verticalHandle)
+{
+    painter->save();
+    painter->setRenderHint(QPainter::Antialiasing, true);
+    painter->setPen(Qt::NoPen);
+    const qreal radius = 1.5;
+    const qreal spacing = 3.5;
+    if (verticalHandle) {
+        qreal x = rect.left() + rect.width() / 2.0;
+        for (qreal y = rect.top() + spacing; y + radius <= rect.bottom() - spacing; y += spacing + 2 * radius) {
+            painter->setBrush(color);
+            painter->drawEllipse(QPointF(x, y), radius, radius);
+            painter->setBrush(color.lighter(140));
+            painter->drawEllipse(QPointF(x + 0.5, y + 0.5), radius, radius);
+        }
+    } else {
+        qreal y = rect.top() + rect.height() / 2.0;
+        for (qreal x = rect.left() + spacing; x + radius <= rect.right() - spacing; x += spacing + 2 * radius) {
+            painter->setBrush(color);
+            painter->drawEllipse(QPointF(x, y), radius, radius);
+            painter->setBrush(color.lighter(140));
+            painter->drawEllipse(QPointF(x + 0.5, y + 0.5), radius, radius);
+        }
+    }
+    painter->restore();
+}
+
+// 菜单弹出面板的圆角边框（PE_FrameMenu 用）。
+static void qt_plastique_drawRoundedBorder(QPainter *painter, const QRect &rect,
+                                           const QColor &border)
+{
+    painter->save();
+    painter->setRenderHint(QPainter::Antialiasing, true);
+    QRectF r(rect);
+    r.adjust(0.5, 0.5, -0.5, -0.5);
+    painter->setPen(QPen(border, 0));
+    painter->drawRoundedRect(r, 3.0, 3.0);
+    painter->restore();
+}
+
 static void qt_plastique_draw_mdibutton(QPainter *painter, const QStyleOptionTitleBar *option, const QRect &tmp, bool hover, bool sunken)
 {
     if (tmp.isNull())
@@ -1010,8 +1091,11 @@ static void qt_plastique_draw_handle(QPainter *painter, const QStyleOption *opti
 /*!
     Constructs a PlasticStyle object.
 */
-PlasticStyle::PlasticStyle()
-    : QProxyStyle(QStyleFactory::create(QLatin1String("Windows"))), animateStep(0), progressBarAnimateTimer(0)
+PlasticStyle::PlasticStyle(bool forceClassicPalette)
+    : QProxyStyle(QStyleFactory::create(QLatin1String("Windows"))),
+      animateStep(0), progressBarAnimateTimer(0),
+      hoverAnimateTimer(0), lastHoverTick(0),
+      m_forceClassicPalette(forceClassicPalette)
 {
     setObjectName(QLatin1String("Plastique"));
 }
@@ -1021,6 +1105,10 @@ PlasticStyle::PlasticStyle()
 */
 PlasticStyle::~PlasticStyle()
 {
+    if (hoverAnimateTimer) {
+        killTimer(hoverAnimateTimer);
+        hoverAnimateTimer = 0;
+    }
 }
 
 /*
@@ -1379,9 +1467,8 @@ void PlasticStyle::drawPrimitive(PrimitiveElement element, const QStyleOption *o
         Q_FALLTHROUGH();
 #endif // QT_NO_LINEEDIT
     case PE_FrameDockWidget:
-    case PE_FrameMenu:
     case PE_FrameStatusBarItem: {
-        // Draws the frame around a popup menu.
+        // Draws the frame around a dock widget / status bar item.
         QPen oldPen = painter->pen();
         painter->setPen(borderColor);
         painter->drawRect(option->rect.adjusted(0, 0, -1, -1));
@@ -1395,22 +1482,44 @@ void PlasticStyle::drawPrimitive(PrimitiveElement element, const QStyleOption *o
         painter->setPen(oldPen);
         break;
     }
+    case PE_PanelMenu: {
+        // 菜单弹出面板的背景：浅色渐变，配合圆角边框。
+        QColor base = option->palette.window().color();
+        painter->save();
+        painter->setRenderHint(QPainter::Antialiasing, true);
+        QPainterPath path;
+        path.addRoundedRect(QRectF(option->rect), 3.0, 3.0);
+        QLinearGradient gradient(option->rect.topLeft(), option->rect.bottomLeft());
+        gradient.setColorAt(0.0, base.lighter(106));
+        gradient.setColorAt(0.5, base.lighter(103));
+        gradient.setColorAt(1.0, base.lighter(100));
+        painter->fillPath(path, gradient);
+        painter->restore();
+        break;
+    }
+    case PE_FrameMenu:
+        // Draws the frame around a popup menu.
+        qt_plastique_drawRoundedBorder(painter, option->rect, borderColor);
+        break;
 #ifndef QT_NO_MAINWINDOW
     case PE_PanelMenuBar:
         if ((widget && qobject_cast<const QMainWindow *>(widget->parentWidget()))
             ) {
-            // Draws the light line above and the dark line below menu bars and
-            // tool bars.
+            // 菜单栏背景：自上而下的浅色渐变，顶部一条亮线、底部一条分界线。
             QPen oldPen = painter->pen();
+            QLinearGradient grad(option->rect.topLeft(), option->rect.bottomLeft());
+            grad.setColorAt(0.0, option->palette.window().color().lighter(108));
+            grad.setColorAt(1.0, option->palette.window().color().darker(102));
+            painter->fillRect(option->rect, grad);
             if (element == PE_PanelMenuBar || (option->state & State_Horizontal)) {
                 painter->setPen(alphaCornerColor);
                 painter->drawLine(option->rect.left(), option->rect.bottom(),
                                   option->rect.right(), option->rect.bottom());
-                painter->setPen(option->palette.window().color().lighter(104));
+                painter->setPen(option->palette.window().color().lighter(112));
                 painter->drawLine(option->rect.left(), option->rect.top(),
                                   option->rect.right(), option->rect.top());
             } else {
-                painter->setPen(option->palette.window().color().lighter(104));
+                painter->setPen(option->palette.window().color().lighter(112));
                 painter->drawLine(option->rect.left(), option->rect.top(),
                                   option->rect.left(), option->rect.bottom());
                 painter->setPen(alphaCornerColor);
@@ -1430,51 +1539,59 @@ void PlasticStyle::drawPrimitive(PrimitiveElement element, const QStyleOption *o
             painter->setRenderHint(QPainter::Antialiasing, false);
         break;
     }
-    case PE_PanelButtonTool:
-        // Draws a tool button (f.ex., in QToolBar and QTabBar)
-        if ((option->state & State_Enabled || option->state & State_On) || !(option->state & State_AutoRaise))
-            qt_plastique_drawShadedPanel(painter, option, true, widget);
+    case PE_PanelButtonTool: {
+        // Draws a tool button (f.ex., in QToolBar and QTabBar).
+        // 现代风格：圆角渐变面板，悬停时平滑过渡。
+        if ((option->state & State_Enabled || option->state & State_On) || !(option->state & State_AutoRaise)) {
+            const QRect rect = option->rect.adjusted(1, 1, -1, -1);
+            if (rect.width() < 4 || rect.height() < 4)
+                break;
+            const bool sunken = (option->state & State_Sunken) || (option->state & State_On);
+            const bool mouseOver = (option->state & State_MouseOver) && (option->state & State_Enabled);
+            // 悬停高亮跟动画值走，不能以 State_MouseOver 为准——鼠标刚离开时
+            // State_MouseOver 已清除，但淡出动画还在跑，若这里直接归零，淡出
+            // 就永远不会被看到。
+            const qreal hov = hoverValue(widget, QRect(), mouseOver ? 1.0 : 0.0);
+
+            painter->save();
+            painter->setRenderHint(QPainter::Antialiasing, true);
+            const qreal radius = qMin<qreal>(4.0, rect.height() / 2.0);
+            QPainterPath path;
+            path.addRoundedRect(QRectF(rect), radius, radius);
+
+            QLinearGradient grad(rect.topLeft(), rect.bottomLeft());
+            if (sunken) {
+                grad.setColorAt(0.0, option->palette.button().color().darker(118));
+                grad.setColorAt(1.0, option->palette.button().color().darker(108));
+            } else {
+                grad.setColorAt(0.0, option->palette.window().color().lighter(106));
+                grad.setColorAt(1.0, option->palette.window().color().darker(102));
+            }
+            painter->fillPath(path, grad);
+
+            if (hov > 0.001 && !sunken) {
+                // 悬停高亮：浅色渐变覆盖层，按动画进度叠加。
+                painter->setOpacity(hov);
+                QLinearGradient hg(rect.topLeft(), rect.bottomLeft());
+                hg.setColorAt(0.0, option->palette.button().color().lighter(118));
+                hg.setColorAt(1.0, option->palette.button().color().darker(104));
+                painter->fillPath(path, hg);
+                painter->setOpacity(1.0);
+            }
+
+            painter->setPen(QPen(alphaCornerColor, 0));
+            painter->drawPath(path);
+            painter->restore();
+        }
         break;
+    }
 #ifndef QT_NO_TOOLBAR
     case PE_IndicatorToolBarHandle: {
-        QPixmap cache;
-        QRect rect = option->rect;
-        const qreal dpr = QStyleHelper::getDpr(painter);
-        QString pixmapName = QStyleHelper::uniqueName(QLatin1String("toolbarhandle"), option, rect.size(), dpr);
-        if (!QPixmapCache::find(pixmapName, &cache)) {
-            cache = QPixmap(QSize(qRound(rect.width() * dpr), qRound(rect.height() * dpr)));
-            cache.setDevicePixelRatio(dpr);
-            cache.fill(Qt::transparent);
-            QPainter cachePainter(&cache);
-            QRect cacheRect(QPoint(0, 0), rect.size());
-            if (widget)
-                cachePainter.fillRect(cacheRect, option->palette.brush(widget->backgroundRole()));
-            else
-                cachePainter.fillRect(cacheRect, option->palette.window());
-
-            QImage handle(qt_toolbarhandle);
-            alphaCornerColor.setAlpha(170);
-            handle.setColor(1, alphaCornerColor.rgba());
-            handle.setColor(2, mergedColors(alphaCornerColor, option->palette.light().color()).rgba());
-            handle.setColor(3, option->palette.light().color().rgba());
-
-            if (option->state & State_Horizontal) {
-                int nchunks = cacheRect.height() / handle.height();
-                int indent = (cacheRect.height() - (nchunks * handle.height())) / 2;
-                for (int i = 0; i < nchunks; ++i)
-                    cachePainter.drawImage(QPoint(cacheRect.left() + 3, cacheRect.top() + indent + i * handle.height()),
-                                           handle);
-            } else {
-                int nchunks = cacheRect.width() / handle.width();
-                int indent = (cacheRect.width() - (nchunks * handle.width())) / 2;
-                for (int i = 0; i < nchunks; ++i)
-                    cachePainter.drawImage(QPoint(cacheRect.left() + indent + i * handle.width(), cacheRect.top() + 3),
-                                           handle);
-            }
-            cachePainter.end();
-            QPixmapCache::insert(pixmapName, cache);
-        }
-        painter->drawPixmap(rect.topLeft(), cache);
+        // 现代风格的圆点把手。
+        const bool verticalHandle = (option->state & State_Horizontal) != 0;
+        QColor dot = mergedColors(option->palette.window().color(), borderColor, 50);
+        dot.setAlpha(150);
+        qt_plastique_drawHandleDots(painter, option->rect, dot, verticalHandle);
         break;
     }
     case PE_IndicatorToolBarSeparator: {
@@ -2789,8 +2906,6 @@ void PlasticStyle::drawControl(ControlElement element, const QStyleOption *optio
                 textBrush = option->palette.windowText(); // KDE uses windowText rather than buttonText for menus
 
             if (menuItem->menuItemType == QStyleOptionMenuItem::Separator) {
-                painter->fillRect(menuItem->rect, option->palette.window().color().lighter(103));
-
                 int w = 0;
                 if (!menuItem->text.isEmpty()) {
                     painter->setFont(menuItem->font);
@@ -2800,10 +2915,11 @@ void PlasticStyle::drawControl(ControlElement element, const QStyleOption *optio
                     w = menuItem->fontMetrics.horizontalAdvance(menuItem->text) + 5;
                 }
 
+                // 现代分隔线：留出左右边距的细线。
                 painter->setPen(alphaCornerColor);
                 bool reverse = menuItem->direction == Qt::RightToLeft;
-                painter->drawLine(menuItem->rect.left() + 5 + (reverse ? 0 : w), menuItem->rect.center().y(),
-                                  menuItem->rect.right() - 5 - (reverse ? w : 0), menuItem->rect.center().y());
+                painter->drawLine(menuItem->rect.left() + 6 + (reverse ? 0 : w), menuItem->rect.center().y(),
+                                  menuItem->rect.right() - 6 - (reverse ? w : 0), menuItem->rect.center().y());
 
                 painter->restore();
                 break;
@@ -2813,17 +2929,19 @@ void PlasticStyle::drawControl(ControlElement element, const QStyleOption *optio
             bool checkable = menuItem->checkType != QStyleOptionMenuItem::NotCheckable;
             bool checked = menuItem->checked;
 
-            if (selected) {
-                qt_plastique_draw_gradient(painter, menuItem->rect,
-                                           option->palette.highlight().color().lighter(105),
-                                           option->palette.highlight().color().darker(110));
-
-                painter->setPen(option->palette.highlight().color().lighter(110));
-                painter->drawLine(option->rect.topLeft(), option->rect.topRight());
-                painter->setPen(option->palette.highlight().color().darker(115));
-                painter->drawLine(option->rect.bottomLeft(), option->rect.bottomRight());
-            } else {
-                painter->fillRect(option->rect, option->palette.window().color().lighter(103));
+            // 高亮：悬停/选中时圆角渐变，带平滑过渡动画。菜单面板背景由
+            // PE_PanelMenu 负责，项目自身不再填充背景。鼠标悬停的项用动画
+            // 值驱动（进入/离开都平滑），键盘选中的项直接用 State_Selected。
+            const qreal hl = hoverValue(widget, menuItem->rect, selected ? 1.0 : 0.0);
+            if (hl > 0.004) {
+                painter->setOpacity(hl);
+                QRect hr = menuItem->rect.adjusted(3, 1, -3, -1);
+                qt_plastique_drawRoundedPanel(painter, hr,
+                                              option->palette.highlight().color().lighter(105),
+                                              option->palette.highlight().color().darker(108),
+                                              option->palette.highlight().color().darker(118),
+                                              4.0);
+                painter->setOpacity(1.0);
             }
 
             // Check
@@ -2977,70 +3095,34 @@ void PlasticStyle::drawControl(ControlElement element, const QStyleOption *optio
 #ifndef QT_NO_MENUBAR
     case CE_MenuBarItem:
         // Draws a menu bar item; File, Edit, Help etc..
-        if ((option->state & State_Selected)) {
-            QPixmap cache;
-            const qreal dpr = QStyleHelper::getDpr(painter);
-            QString pixmapName = QStyleHelper::uniqueName(QLatin1String("menubaritem"), option, option->rect.size(), dpr);
-            if (!QPixmapCache::find(pixmapName, &cache)) {
-                cache = QPixmap(QSize(qRound(option->rect.width() * dpr), qRound(option->rect.height() * dpr)));
-                cache.setDevicePixelRatio(dpr);
-                cache.fill(Qt::white);
-                QRect pixmapRect(0, 0, option->rect.width(), option->rect.height());
-                QPainter cachePainter(&cache);
-
-                QRect rect = pixmapRect;
-
-                // gradient fill
-                if ((option->state & QStyle::State_Sunken) || (option->state & QStyle::State_On)) {
-                    qt_plastique_draw_gradient(&cachePainter, rect.adjusted(1, 1, -1, -1),
-                                               option->palette.button().color().darker(114),
-                                               option->palette.button().color().darker(106));
-                } else {
-                    qt_plastique_draw_gradient(&cachePainter, rect.adjusted(1, 1, -1, -1),
-                                               option->palette.window().color().lighter(105),
-                                               option->palette.window().color().darker(102));
-                }
-
-                // outer border and corners
-                cachePainter.setPen(borderColor);
-                cachePainter.drawRect(rect.adjusted(0, 0, -1, -1));
-                cachePainter.setPen(alphaCornerColor);
-
-                const QPoint points[4] = {
-                    rect.topLeft(),
-                    rect.topRight(),
-                    rect.bottomLeft(),
-                    rect.bottomRight() };
-                cachePainter.drawPoints(points, 4);
-
-                // inner border
-                if ((option->state & QStyle::State_Sunken) || (option->state & QStyle::State_On))
-                    cachePainter.setPen(option->palette.button().color().darker(118));
-                else
-                    cachePainter.setPen(gradientStartColor);
-
-                QLine lines[2];
-                lines[0] = QLine(rect.left() + 1, rect.top() + 1, rect.right() - 1, rect.top() + 1);
-                lines[1] = QLine(rect.left() + 1, rect.top() + 2, rect.left() + 1, rect.bottom() - 2);
-                cachePainter.drawLines(lines, 2);
-
-                if ((option->state & QStyle::State_Sunken) || (option->state & QStyle::State_On))
-                    cachePainter.setPen(option->palette.button().color().darker(114));
-                else
-                    cachePainter.setPen(gradientStopColor.darker(102));
-                lines[0] = QLine(rect.left() + 1, rect.bottom() - 1, rect.right() - 1, rect.bottom() - 1);
-                lines[1] = QLine(rect.right() - 1, rect.top() + 1, rect.right() - 1, rect.bottom() - 2);
-                cachePainter.drawLines(lines, 2);
-                cachePainter.end();
-                QPixmapCache::insert(pixmapName, cache);
-            }
-            painter->drawPixmap(option->rect.topLeft(), cache);
-        } else {
-            painter->fillRect(option->rect, option->palette.window());
-        }
-
+        // 现代风格：悬停/选中时圆角渐变高亮（带动画），空闲时不绘制背景，
+        // 让 PE_PanelMenuBar / CE_MenuBarEmptyArea 的渐变透出。
         if (const QStyleOptionMenuItem *mbi = qstyleoption_cast<const QStyleOptionMenuItem *>(option)) {
+            const bool selected = option->state & State_Selected;
+            const bool active = option->state & (State_Sunken | State_On);
+            const qreal hl = hoverValue(widget, option->rect, (selected || active) ? 1.0 : 0.0);
+            if (hl > 0.004) {
+                painter->save();
+                painter->setOpacity(hl);
+                const QRect r = option->rect.adjusted(1, 1, -1, -1);
+                if (active || selected) {
+                    qt_plastique_drawRoundedPanel(painter, r,
+                                                  option->palette.button().color().darker(112),
+                                                  option->palette.button().color().darker(106),
+                                                  borderColor, 4.0);
+                } else {
+                    qt_plastique_drawRoundedPanel(painter, r,
+                                                  option->palette.window().color().lighter(112),
+                                                  option->palette.window().color().darker(104),
+                                                  borderColor, 4.0);
+                }
+                painter->restore();
+            }
+
+            // 文本：清除 State_Selected 让 QCommonStyle 只画文字，
+            // 否则它会再画一层自己的背景。
             QStyleOptionMenuItem newMI = *mbi;
+            newMI.state &= ~State_Selected;
             if (!(paletteResolveMask(option->palette) & (1 << QPalette::ButtonText))) //KDE uses windowText rather than buttonText for menus
                 newMI.palette.setColor(QPalette::ButtonText, newMI.palette.windowText().color());
             QCommonStyle::drawControl(element, &newMI, painter, widget);
@@ -3050,7 +3132,11 @@ void PlasticStyle::drawControl(ControlElement element, const QStyleOption *optio
 #ifndef QT_NO_MAINWINDOW
     case CE_MenuBarEmptyArea:
         if (widget && qobject_cast<const QMainWindow *>(widget->parentWidget())) {
-            painter->fillRect(option->rect, option->palette.window());
+            // 与 PE_PanelMenuBar 一致的渐变背景。
+            QLinearGradient grad(option->rect.topLeft(), option->rect.bottomLeft());
+            grad.setColorAt(0.0, option->palette.window().color().lighter(108));
+            grad.setColorAt(1.0, option->palette.window().color().darker(102));
+            painter->fillRect(option->rect, grad);
             QPen oldPen = painter->pen();
             painter->setPen(QPen(option->palette.dark().color()));
             painter->drawLine(option->rect.bottomLeft(), option->rect.bottomRight());
@@ -3223,6 +3309,23 @@ void PlasticStyle::drawControl(ControlElement element, const QStyleOption *optio
 #ifndef QT_NO_TOOLBAR
     case CE_ToolBar:
         if (const QStyleOptionToolBar *toolBar = qstyleoption_cast<const QStyleOptionToolBar *>(option)) {
+            // 渐变背景：水平/垂直工具栏分别用纵向/横向渐变，让工具栏不再是
+            // 一块平板，而是略带立体感的现代面板。
+            painter->save();
+            if (toolBar->toolBarArea == Qt::TopToolBarArea
+                || toolBar->toolBarArea == Qt::BottomToolBarArea) {
+                QLinearGradient grad(option->rect.topLeft(), option->rect.bottomLeft());
+                grad.setColorAt(0.0, option->palette.window().color().lighter(106));
+                grad.setColorAt(1.0, option->palette.window().color().darker(102));
+                painter->fillRect(option->rect, grad);
+            } else {
+                QLinearGradient grad(option->rect.topLeft(), option->rect.topRight());
+                grad.setColorAt(0.0, option->palette.window().color().lighter(106));
+                grad.setColorAt(1.0, option->palette.window().color().darker(102));
+                painter->fillRect(option->rect, grad);
+            }
+            painter->restore();
+
             // Draws the light line above and the dark line below menu bars and
             // tool bars.
             QPen oldPen = painter->pen();
@@ -4851,6 +4954,22 @@ void PlasticStyle::drawComplexControl(ComplexControl control, const QStyleOption
             QStyleHelper::drawDial(dial, painter);
         break;
 #endif // QT_NO_DIAL
+#ifndef QT_NO_TOOLBUTTON
+    case CC_ToolButton:
+        if (const QStyleOptionToolButton *toolbutton = qstyleoption_cast<const QStyleOptionToolButton *>(option)) {
+            // autoRaise 工具按钮在鼠标离开时，基类会清掉 State_Raised 并跳过
+            // PE_PanelButtonTool 绘制，淡出动画因此永远画不出来。淡出期间把
+            // State_MouseOver 补回去，让基类照常画面板；面板本身的高亮值由
+            // PE_PanelButtonTool 按动画走，与 State_MouseOver 无关。
+            if (widget && hasHoverAnimation(widget)) {
+                QStyleOptionToolButton newopt = *toolbutton;
+                newopt.state |= State_MouseOver;
+                QProxyStyle::drawComplexControl(control, &newopt, painter, widget);
+                break;
+            }
+        }
+        Q_FALLTHROUGH();
+#endif // QT_NO_TOOLBUTTON
     default:
         QProxyStyle::drawComplexControl(control, option, painter, widget);
         break;
@@ -5565,6 +5684,9 @@ QPalette PlasticStyle::standardPalette() const
     palette.setBrush(QPalette::Disabled, QPalette::HighlightedText, QColor(QRgb(0xffffffff)));
     palette.setBrush(QPalette::Disabled, QPalette::Link, QColor(QRgb(0xff0000ee)));
     palette.setBrush(QPalette::Disabled, QPalette::LinkVisited, QColor(QRgb(0xff52188b)));
+    palette.setBrush(QPalette::Disabled, QPalette::ToolTipBase, QColor(QRgb(0xffffffdc)));
+    palette.setBrush(QPalette::Disabled, QPalette::ToolTipText, QColor(QRgb(0xff000000)));
+    palette.setBrush(QPalette::Disabled, QPalette::PlaceholderText, QColor(QRgb(0xff808080)));
     palette.setBrush(QPalette::Active, QPalette::WindowText, QColor(QRgb(0xff000000)));
     palette.setBrush(QPalette::Active, QPalette::Button, QColor(QRgb(0xffdddfe4)));
     palette.setBrush(QPalette::Active, QPalette::Light, QColor(QRgb(0xffffffff)));
@@ -5582,6 +5704,9 @@ QPalette PlasticStyle::standardPalette() const
     palette.setBrush(QPalette::Active, QPalette::HighlightedText, QColor(QRgb(0xffffffff)));
     palette.setBrush(QPalette::Active, QPalette::Link, QColor(QRgb(0xff0000ee)));
     palette.setBrush(QPalette::Active, QPalette::LinkVisited, QColor(QRgb(0xff52188b)));
+    palette.setBrush(QPalette::Active, QPalette::ToolTipBase, QColor(QRgb(0xffffffdc)));
+    palette.setBrush(QPalette::Active, QPalette::ToolTipText, QColor(QRgb(0xff000000)));
+    palette.setBrush(QPalette::Active, QPalette::PlaceholderText, QColor(QRgb(0xff808080)));
     palette.setBrush(QPalette::Inactive, QPalette::WindowText, QColor(QRgb(0xff000000)));
     palette.setBrush(QPalette::Inactive, QPalette::Button, QColor(QRgb(0xffdddfe4)));
     palette.setBrush(QPalette::Inactive, QPalette::Light, QColor(QRgb(0xffffffff)));
@@ -5599,6 +5724,10 @@ QPalette PlasticStyle::standardPalette() const
     palette.setBrush(QPalette::Inactive, QPalette::HighlightedText, QColor(QRgb(0xffffffff)));
     palette.setBrush(QPalette::Inactive, QPalette::Link, QColor(QRgb(0xff0000ee)));
     palette.setBrush(QPalette::Inactive, QPalette::LinkVisited, QColor(QRgb(0xff52188b)));
+    palette.setBrush(QPalette::Inactive, QPalette::ToolTipBase, QColor(QRgb(0xffffffdc)));
+    palette.setBrush(QPalette::Inactive, QPalette::ToolTipText, QColor(QRgb(0xff000000)));
+    palette.setBrush(QPalette::Inactive, QPalette::PlaceholderText, QColor(QRgb(0xff808080)));
+    QtStyles::applyClassicAccent(&palette);
     return palette;
 }
 
@@ -5633,6 +5762,24 @@ void PlasticStyle::polish(QWidget *widget)
         || widget->inherits("QDockWidgetSeparator")) {
         widget->setAttribute(Qt::WA_Hover);
     }
+
+    // 悬停动画：为菜单、菜单栏和工具按钮安装事件过滤器。
+#ifndef QT_NO_TOOLBUTTON
+    if (qobject_cast<QToolButton *>(widget)) {
+        widget->setAttribute(Qt::WA_Hover);
+        widget->installEventFilter(this);
+    }
+#endif
+#ifndef QT_NO_MENU
+    if (qobject_cast<QMenu *>(widget)) {
+        widget->setAttribute(Qt::WA_Hover);
+        widget->installEventFilter(this);
+    }
+#endif
+#ifndef QT_NO_MENUBAR
+    if (qobject_cast<QMenuBar *>(widget))
+        widget->installEventFilter(this);
+#endif
 
     if (false // to simplify the #ifdefs
 #ifndef QT_NO_MENUBAR
@@ -5688,6 +5835,28 @@ void PlasticStyle::unpolish(QWidget *widget)
         widget->setAttribute(Qt::WA_Hover, false);
     }
 
+    // 卸载悬停动画相关的事件过滤器，并清除动画状态。
+#ifndef QT_NO_TOOLBUTTON
+    if (qobject_cast<QToolButton *>(widget)) {
+        widget->setAttribute(Qt::WA_Hover, false);
+        widget->removeEventFilter(this);
+        removeHoverAnimations(widget);
+    }
+#endif
+#ifndef QT_NO_MENU
+    if (qobject_cast<QMenu *>(widget)) {
+        widget->setAttribute(Qt::WA_Hover, false);
+        widget->removeEventFilter(this);
+        removeHoverAnimations(widget);
+    }
+#endif
+#ifndef QT_NO_MENUBAR
+    if (qobject_cast<QMenuBar *>(widget)) {
+        widget->removeEventFilter(this);
+        removeHoverAnimations(widget);
+    }
+#endif
+
     if (false // to simplify the #ifdefs
 #ifndef QT_NO_MENUBAR
         || qobject_cast<QMenuBar *>(widget)
@@ -5729,6 +5898,9 @@ void PlasticStyle::polish(QApplication *app)
 */
 void PlasticStyle::polish(QPalette &pal)
 {
+    // "plastic-classic" 在安装时强制套用标准配色，保证与经典观感一致。
+    if (m_forceClassicPalette)
+        pal = standardPalette();
     QProxyStyle::polish(pal);
 #ifdef Q_WS_MAC
     pal.setBrush(QPalette::Shadow, Qt::black);
@@ -5827,6 +5999,74 @@ int PlasticStyle::layoutSpacing(QSizePolicy::ControlType control1,
 */
 bool PlasticStyle::eventFilter(QObject *watched, QEvent *event)
 {
+    switch (event->type()) {
+    case QEvent::HoverEnter:
+    case QEvent::HoverMove: {
+        // 悬停动画：菜单项/菜单栏项按 item 矩形追踪，工具按钮按整个控件追踪。
+        QHoverEvent *hoverEvent = static_cast<QHoverEvent *>(event);
+        const QPoint pos = hoverPos(hoverEvent);
+#ifndef QT_NO_MENUBAR
+        if (QMenuBar *menuBar = qobject_cast<QMenuBar *>(watched)) {
+            // 移到空白处要停掉旧高亮，否则它会在菜单栏上停留到鼠标离开。
+            if (QAction *action = menuBar->actionAt(pos))
+                startHoverAnimation(menuBar, menuBar->actionGeometry(action));
+            else
+                stopHoverAnimation(menuBar);
+            break;
+        }
+#endif
+#ifndef QT_NO_MENU
+        if (QMenu *menu = qobject_cast<QMenu *>(watched)) {
+            if (QAction *action = menu->actionAt(pos)) {
+                if (!action->isSeparator())
+                    startHoverAnimation(menu, menu->actionGeometry(action));
+                else
+                    stopHoverAnimation(menu);
+            } else {
+                stopHoverAnimation(menu);
+            }
+            break;
+        }
+#endif
+#ifndef QT_NO_TOOLBUTTON
+        if (qobject_cast<QToolButton *>(watched)) {
+            startHoverAnimation(qobject_cast<const QWidget *>(watched));
+            break;
+        }
+#endif
+        break;
+    }
+    case QEvent::HoverLeave: {
+#ifndef QT_NO_MENUBAR
+        if (qobject_cast<QMenuBar *>(watched)) {
+            stopHoverAnimation(qobject_cast<const QWidget *>(watched));
+            break;
+        }
+#endif
+#ifndef QT_NO_MENU
+        if (qobject_cast<QMenu *>(watched)) {
+            stopHoverAnimation(qobject_cast<const QWidget *>(watched));
+            break;
+        }
+#endif
+#ifndef QT_NO_TOOLBUTTON
+        if (qobject_cast<QToolButton *>(watched)) {
+            stopHoverAnimation(qobject_cast<const QWidget *>(watched));
+            break;
+        }
+#endif
+        break;
+    }
+    case QEvent::Hide:
+        removeHoverAnimations(qobject_cast<const QWidget *>(watched));
+        break;
+    case QEvent::Destroy:
+        removeHoverAnimations(qobject_cast<const QWidget *>(watched));
+        break;
+    default:
+        break;
+    }
+
 #ifndef QT_NO_PROGRESSBAR
     switch (event->type()) {
     case QEvent::StyleChange:
@@ -5878,8 +6118,8 @@ bool PlasticStyle::event(QEvent *event)
 {
     switch (event->type()) {
     case QEvent::Timer: {
-#ifndef QT_NO_PROGRESSBAR
         QTimerEvent *timerEvent = reinterpret_cast<QTimerEvent *>(event);
+#ifndef QT_NO_PROGRESSBAR
         if (timerEvent->timerId() == progressBarAnimateTimer) {
             Q_ASSERT(ProgressBarFps > 0);
             animateStep = timer.elapsed() / (1000 / ProgressBarFps);
@@ -5889,6 +6129,8 @@ bool PlasticStyle::event(QEvent *event)
             }
         }
 #endif // QT_NO_PROGRESSBAR
+        if (timerEvent->timerId() == hoverAnimateTimer)
+            advanceHoverAnimations();
         event->ignore();
     }
     default:
@@ -5919,5 +6161,158 @@ void PlasticStyle::stopProgressAnimation(QProgressBar *bar)
             killTimer(progressBarAnimateTimer);
             progressBarAnimateTimer = 0;
         }
+    }
+}
+
+/*!
+    返回 widget 上矩形 \a rect 的悬停动画进度（0..1）。\a rect 为空表示
+    整个控件（工具按钮）。若该矩形当前没有动画条目（鼠标未悬停或动画已
+    结束），返回 \a fallback——调用方把自己的状态回退（State_Selected、
+    State_MouseOver 等）传进来，避免调用方再查一次表。
+*/
+qreal PlasticStyle::hoverValue(const QWidget *widget, const QRect &rect, qreal fallback) const
+{
+    if (!widget)
+        return fallback;
+    PlasticStyleHoverKey key;
+    key.widget = widget;
+    key.rect = rect;
+    auto it = hoverAnimations.constFind(key);
+    if (it == hoverAnimations.constEnd())
+        return fallback;
+    return it->value;
+}
+
+bool PlasticStyle::hasHoverAnimation(const QWidget *widget, const QRect &rect) const
+{
+    if (!widget)
+        return false;
+    PlasticStyleHoverKey key;
+    key.widget = widget;
+    key.rect = rect;
+    return hoverAnimations.constFind(key) != hoverAnimations.constEnd();
+}
+
+void PlasticStyle::startHoverAnimation(const QWidget *widget, const QRect &rect)
+{
+    if (!widget)
+        return;
+    if (!rect.isNull()) {
+        // 菜单项 / 菜单栏项：把同控件上当前正在进入的其他矩形切到离开
+        // 状态，让它们平滑淡出。空矩形（工具按钮）没有"其他项"，跳过。
+        for (auto it = hoverAnimations.begin(); it != hoverAnimations.end(); ++it) {
+            if (it.key().widget == widget && !it.key().rect.isNull()
+                && it.value().hovering && it.key().rect != rect) {
+                it.value().hovering = false;
+            }
+        }
+    }
+
+    PlasticStyleHoverKey key;
+    key.widget = widget;
+    key.rect = rect;
+    auto it = hoverAnimations.find(key);
+    if (it == hoverAnimations.end())
+        hoverAnimations.insert(key, HoverAnimation());
+    else
+        it->hovering = true;
+
+    ensureHoverTimer();
+}
+
+void PlasticStyle::stopHoverAnimation(const QWidget *widget)
+{
+    if (!widget)
+        return;
+    bool found = false;
+    for (auto it = hoverAnimations.begin(); it != hoverAnimations.end(); ++it) {
+        if (it.key().widget == widget) {
+            it.value().hovering = false;
+            found = true;
+        }
+    }
+    if (!found)
+        return;
+    ensureHoverTimer();
+}
+
+void PlasticStyle::ensureHoverTimer()
+{
+    if (!hoverAnimateTimer) {
+        lastHoverTick = 0;
+        hoverTimer.start();
+        hoverAnimateTimer = startTimer(1000 / HoverFps);
+    }
+}
+
+void PlasticStyle::removeHoverAnimations(const QWidget *widget)
+{
+    if (!widget)
+        return;
+    for (auto it = hoverAnimations.begin(); it != hoverAnimations.end();) {
+        if (it.key().widget == widget)
+            it = hoverAnimations.erase(it);
+        else
+            ++it;
+    }
+    if (hoverAnimations.isEmpty() && hoverAnimateTimer) {
+        killTimer(hoverAnimateTimer);
+        hoverAnimateTimer = 0;
+    }
+}
+
+// 推进所有悬停动画：每个 tick 按进入/离开时长线性逼近目标值，到达目标后
+// 停止重绘该控件。
+void PlasticStyle::advanceHoverAnimations()
+{
+    if (hoverAnimations.isEmpty()) {
+        if (hoverAnimateTimer) {
+            killTimer(hoverAnimateTimer);
+            hoverAnimateTimer = 0;
+        }
+        return;
+    }
+    const int elapsed = hoverTimer.elapsed();
+    const int dt = (lastHoverTick == 0) ? (1000 / HoverFps) : (elapsed - lastHoverTick);
+    lastHoverTick = elapsed;
+
+    bool allSettled = true;
+    QSet<const QWidget *> dirty;
+    for (auto it = hoverAnimations.begin(); it != hoverAnimations.end();) {
+        HoverAnimation &state = it.value();
+        const int duration = state.hovering ? HoverDurationIn : HoverDurationOut;
+        const qreal step = qreal(dt) / duration;
+        qreal newValue;
+        if (state.hovering)
+            newValue = qMin(1.0, state.value + step);
+        else
+            newValue = qMax(0.0, state.value - step);
+
+        const bool changed = !qFuzzyCompare(newValue, state.value);
+        state.value = newValue;
+
+        if (!state.hovering && newValue <= 0.0) {
+            // 淡出完成：移除条目，并强制重绘一次，把面板残影清掉——否则
+            // 这一帧画面上还会留着已不该再画的工具按钮面板。
+            dirty.insert(it.key().widget);
+            it = hoverAnimations.erase(it);
+            continue;
+        }
+        // 还在衰减/攀升的条目不算 settled。
+        const bool atTarget = state.hovering ? (state.value >= 1.0) : (state.value <= 0.0);
+        if (!atTarget)
+            allSettled = false;
+        if (changed)
+            dirty.insert(it.key().widget);
+        ++it;
+    }
+    for (const QWidget *w : dirty)
+        const_cast<QWidget *>(w)->update();
+
+    // 全部条目都停在目标值（鼠标不动时动画停在 1.0）：停掉计时器，避免
+    // 60fps 空转。条目保留在表中供绘制查询，鼠标一移动就重新启动。
+    if (allSettled && hoverAnimateTimer) {
+        killTimer(hoverAnimateTimer);
+        hoverAnimateTimer = 0;
     }
 }

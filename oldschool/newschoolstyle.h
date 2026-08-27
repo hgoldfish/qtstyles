@@ -49,7 +49,7 @@ class NewschoolStyle : public OldschoolStyle
 {
     Q_OBJECT
 public:
-    explicit NewschoolStyle(bool useHighlightCols = false);
+    explicit NewschoolStyle(bool useHighlightCols = false, bool forceClassicPalette = false);
     virtual ~NewschoolStyle();
 
     int pixelMetric(PixelMetric metric, const QStyleOption *option = 0,

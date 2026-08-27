@@ -37,7 +37,9 @@ class PhaseStyle : public QProxyStyle
 {
     Q_OBJECT
 public:
-    PhaseStyle();
+    // 当 forceClassicPalette 为 true 时（对应 "phase-classic" 键），样式
+    // 安装时通过 polish(QPalette&) 强制套用 standardPalette() 的经典配色。
+    explicit PhaseStyle(bool forceClassicPalette = false);
     ~PhaseStyle() override;
 
     void polish(QApplication* app) override;
@@ -162,6 +164,7 @@ private:
     int contrast_;
     bool gradients_;
     bool highlights_;
+    bool m_forceClassicPalette;
 
     QList<QBitmap> bitmaps_;
     QList<QProgressBar*> bars_; // animated progressbars

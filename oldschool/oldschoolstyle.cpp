@@ -99,8 +99,8 @@ static const int motifCheckMarkSpace    = 16;
   highlighting, which is a simple inversion between the base and the
   text color.
 */
-OldschoolStyle::OldschoolStyle(bool useHighlightCols) : QCommonStyle(), focus(0),
-    highlightCols(useHighlightCols), animationFps(25), animateTimer(0), animateStep(0),
+OldschoolStyle::OldschoolStyle(bool useHighlightCols, bool forceClassicPalette) : QCommonStyle(), focus(0),
+    highlightCols(useHighlightCols), m_forceClassicPalette(forceClassicPalette), animationFps(25), animateTimer(0), animateStep(0),
     spinboxHCoeff(6)
 {
 }
@@ -229,6 +229,10 @@ bool OldschoolStyle::useHighlightColors() const
 
 void OldschoolStyle::polish(QPalette& pal)
 {
+    // "*-classic" 变体在安装时强制套用标准配色；Motif 的反白选中随后照常处理。
+    if (m_forceClassicPalette)
+        pal = standardPalette();
+
     if (pal.brush(QPalette::Active, QPalette::Light) == pal.brush(QPalette::Active, QPalette::Base)) {
         QColor nlight = pal.color(QPalette::Active, QPalette::Light).darker(108);
         pal.setColor(QPalette::Active, QPalette::Light, nlight) ;

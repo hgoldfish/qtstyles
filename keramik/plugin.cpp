@@ -39,6 +39,8 @@ QStyle *KeramikStylePlugin::create(const QString &key)
 {
     if (key.compare(QStringLiteral("keramik"), Qt::CaseInsensitive) == 0)
         return new KeramikStyle;
+    if (key.compare(QStringLiteral("keramik-classic"), Qt::CaseInsensitive) == 0)
+        return new KeramikStyle(true);
     return nullptr;
 }
 

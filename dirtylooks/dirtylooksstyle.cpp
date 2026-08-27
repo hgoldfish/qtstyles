@@ -40,6 +40,7 @@
 ****************************************************************************/
 
 #include "dirtylooksstyle.h"
+#include "qtstyles_palette.h"
 
 #include <qcombobox.h>
 #include <qpushbutton.h>
@@ -615,7 +616,10 @@ static void dirtylooks_draw_mdibutton(QPainter *painter, const QStyleOptionTitle
 /*!
     Constructs a DirtylooksStyle object.
 */
-DirtylooksStyle::DirtylooksStyle() : QProxyStyle(QStyleFactory::create(QLatin1String("Windows"))), animateStep(0), animateTimer(0)
+DirtylooksStyle::DirtylooksStyle(bool forceClassicPalette)
+    : QProxyStyle(QStyleFactory::create(QLatin1String("Windows"))),
+      animateStep(0), animateTimer(0),
+      m_forceClassicPalette(forceClassicPalette)
 {
     setObjectName(QLatin1String("CleanLooks"));
 }
@@ -2358,43 +2362,67 @@ void DirtylooksStyle::drawControl(ControlElement element, const QStyleOption *op
 */
 QPalette DirtylooksStyle::standardPalette () const
 {
-    QPalette palette = QProxyStyle::standardPalette();
-    palette.setBrush(QPalette::Active, QPalette::Highlight, QColor(98, 140, 178));
-    palette.setBrush(QPalette::Inactive, QPalette::Highlight, QColor(145, 141, 126));
-    palette.setBrush(QPalette::Disabled, QPalette::Highlight, QColor(145, 141, 126));
+    QPalette palette;
 
     QColor backGround(239, 235, 231);
-
     QColor light = backGround.lighter(150);
     QColor base = Qt::white;
-    QColor dark = QColor(170, 156, 143).darker(110);
-    dark = backGround.darker(150);
+    QColor mid = backGround.darker(130);
+    QColor dark = backGround.darker(150);
+    QColor midlight = mid.lighter(110);
     QColor darkDisabled = QColor(209, 200, 191).darker(110);
-
-    //### Find the correct disabled text color
-    palette.setBrush(QPalette::Disabled, QPalette::Text, QColor(190, 190, 190));
-
-    palette.setBrush(QPalette::Window, backGround);
-    palette.setBrush(QPalette::Mid, backGround.darker(130));
-    palette.setBrush(QPalette::Light, light);
-
-    palette.setBrush(QPalette::Active, QPalette::Base, base);
-    palette.setBrush(QPalette::Inactive, QPalette::Base, base);
-    palette.setBrush(QPalette::Disabled, QPalette::Base, backGround);
-
-    palette.setBrush(QPalette::Midlight, palette.mid().color().lighter(110));
-
-    palette.setBrush(QPalette::All, QPalette::Dark, dark);
-    palette.setBrush(QPalette::Disabled, QPalette::Dark, darkDisabled);
-
-    QColor button = backGround;
-
-    palette.setBrush(QPalette::Button, button);
-
     QColor shadow = dark.darker(135);
-    palette.setBrush(QPalette::Shadow, shadow);
-    palette.setBrush(QPalette::Disabled, QPalette::Shadow, shadow.lighter(150));
-    palette.setBrush(QPalette::HighlightedText, QColor(QRgb(0xffffffff)));
+    QColor shadowDisabled = shadow.lighter(150);
+    QColor highlightActive(98, 140, 178);
+    QColor highlightInactive(145, 141, 126);
+    QColor disabledText(190, 190, 190);
+
+    // 三个 ColorGroup 里相同的角色用 QPalette::All 一次填满，再覆盖各组差异
+    // （高亮随激活状态变化、Disabled 组保持 cleanlooks 的经典处理），返回的
+    // palette 完全自足：QPalette 的默认构造会继承当前 application palette，
+    // 缺省角色会在样式切换时串入上一个样式的配色。
+    const QColor alternateBase(0xf4, 0xf2, 0xee);
+    const QColor toolTipBase(0xff, 0xff, 0xdc);
+    const QColor link(0x00, 0x00, 0xee);
+    const QColor linkVisited(0x52, 0x18, 0x8b);
+
+    palette.setBrush(QPalette::All, QPalette::Window, backGround);
+    palette.setBrush(QPalette::All, QPalette::WindowText, Qt::black);
+    palette.setBrush(QPalette::All, QPalette::Base, base);
+    palette.setBrush(QPalette::All, QPalette::AlternateBase, alternateBase);
+    palette.setBrush(QPalette::All, QPalette::ToolTipBase, toolTipBase);
+    palette.setBrush(QPalette::All, QPalette::ToolTipText, Qt::black);
+    palette.setBrush(QPalette::All, QPalette::Text, Qt::black);
+    palette.setBrush(QPalette::All, QPalette::Button, backGround);
+    palette.setBrush(QPalette::All, QPalette::ButtonText, Qt::black);
+    palette.setBrush(QPalette::All, QPalette::BrightText, Qt::white);
+    palette.setBrush(QPalette::All, QPalette::Light, light);
+    palette.setBrush(QPalette::All, QPalette::Midlight, midlight);
+    palette.setBrush(QPalette::All, QPalette::Mid, mid);
+    palette.setBrush(QPalette::All, QPalette::Dark, dark);
+    palette.setBrush(QPalette::All, QPalette::Shadow, shadow);
+    palette.setBrush(QPalette::All, QPalette::HighlightedText, Qt::white);
+    palette.setBrush(QPalette::All, QPalette::PlaceholderText, dark);
+    palette.setBrush(QPalette::All, QPalette::Link, link);
+    palette.setBrush(QPalette::All, QPalette::LinkVisited, linkVisited);
+
+    // 高亮随窗口激活状态变化（cleanlooks 惯例）。
+    palette.setBrush(QPalette::Active, QPalette::Highlight, highlightActive);
+    palette.setBrush(QPalette::Inactive, QPalette::Highlight, highlightInactive);
+    palette.setBrush(QPalette::Disabled, QPalette::Highlight, highlightInactive);
+
+    // Disabled 组差异覆盖：禁用文字用浅灰、Base 退为 Window 色、bevel 更淡。
+    palette.setBrush(QPalette::Disabled, QPalette::WindowText, disabledText);
+    palette.setBrush(QPalette::Disabled, QPalette::Base, backGround);
+    palette.setBrush(QPalette::Disabled, QPalette::AlternateBase, backGround);
+    palette.setBrush(QPalette::Disabled, QPalette::ToolTipText, disabledText);
+    palette.setBrush(QPalette::Disabled, QPalette::Text, disabledText);
+    palette.setBrush(QPalette::Disabled, QPalette::ButtonText, disabledText);
+    palette.setBrush(QPalette::Disabled, QPalette::PlaceholderText, disabledText);
+    palette.setBrush(QPalette::Disabled, QPalette::Dark, darkDisabled);
+    palette.setBrush(QPalette::Disabled, QPalette::Shadow, shadowDisabled);
+
+    QtStyles::applyClassicAccent(&palette);
     return palette;
 }
 
@@ -3918,6 +3946,9 @@ void DirtylooksStyle::polish(QWidget *widget)
 */
 void DirtylooksStyle::polish(QPalette &pal)
 {
+    // "dirtylooks-classic" 在安装时强制套用标准配色，保证与经典观感一致。
+    if (m_forceClassicPalette)
+        pal = standardPalette();
     QProxyStyle::polish(pal);
     //this is a workaround for some themes such as Human, where the contrast
     //between text and background is too low.

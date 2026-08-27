@@ -54,6 +54,8 @@ QStyle *PlasticStylePlugin::create(const QString &key)
 {
     if (key == "plastic")
         return new PlasticStyle;
+    if (key == "plastic-classic")
+        return new PlasticStyle(true);
     return 0;
 }
 

@@ -25,6 +25,8 @@
 
 #include <QtWidgets/qapplication.h>
 #include <QtWidgets/qcombobox.h>
+#include <QtWidgets/qdockwidget.h>
+#include <QtWidgets/qgroupbox.h>
 #include <QtWidgets/qheaderview.h>
 #include <QtWidgets/qlineedit.h>
 #include <QtWidgets/qmenu.h>
@@ -36,8 +38,10 @@
 #include <QtWidgets/qspinbox.h>
 #include <QtWidgets/qstyleoption.h>
 #include <QtWidgets/qtabbar.h>
+#include <QtWidgets/qtoolbox.h>
 #include <QtWidgets/qtoolbar.h>
 #include <QtWidgets/qtoolbutton.h>
+#include <QtWidgets/qstylefactory.h>
 
 #include <QtGui/qpainter.h>
 #include <QtGui/qpainterpath.h>
@@ -45,6 +49,8 @@
 
 #include <QtCore/qmath.h>
 #include <QtCore/qdebug.h>
+#include <QtCore/qtimer.h>
+#include <QtCore/qcoreevent.h>
 
 // Qt 6 renamed QStyleOptionMenuItem::tabWidth to reservedShortcutWidth.
 static inline int menuItemTabWidth(const QStyleOptionMenuItem *mi)
@@ -106,7 +112,19 @@ static inline QColor colorLighten(const QColor &in, int factor)
                   qMin(255, out.blue() + extra));
 }
 
-KeramikStyle::KeramikStyle() = default;
+KeramikStyle::KeramikStyle(bool forceClassicPalette)
+    : QProxyStyle(QStyleFactory::create(QStringLiteral("Windows"))),
+      m_forceClassicPalette(forceClassicPalette)
+{
+    // Drive the busy (indeterminate) progress bar animation from a QTimer.
+    // A plain startTimer() on this style would deliver timer events through
+    // QProxyStyle::event(), which on Qt 5 forwards every event to the base
+    // style, so timerEvent() would never be called.  A QTimer's timeout
+    // signal bypasses QStyle::event() entirely, so the animation behaves
+    // identically on Qt 5 and Qt 6 (same trick as phase/winxp in this repo).
+    m_busyTimer = new QTimer(this);
+    connect(m_busyTimer, &QTimer::timeout, this, &KeramikStyle::animateProgressBars);
+}
 KeramikStyle::~KeramikStyle() = default;
 
 /*!
@@ -185,14 +203,6 @@ const KeramikStyle::KeramikColors *KeramikStyle::colors(const QPalette &palette)
     return &m_colorCache.insert(key, c).value();
 }
 
-QPainterPath KeramikStyle::roundedRect(const QRect &r, int radius)
-{
-    const qreal rr = qMin(qreal(radius), qMin(qreal(r.width()), qreal(r.height())) / 2.0);
-    QPainterPath path;
-    path.addRoundedRect(QRectF(r), rr, rr);
-    return path;
-}
-
 // ---------------------------------------------------------------------------
 // Shared drawing helpers
 // ---------------------------------------------------------------------------
@@ -202,53 +212,89 @@ QPainterPath KeramikStyle::roundedRect(const QRect &r, int radius)
 // triangle); when etched, the light pass is drawn one pixel down/right first.
 struct ArrowSeg { qint8 x1, y1, x2, y2; };
 
-static const ArrowSeg keramikUpArrow[] = {
-    { -1, -3,  0, -3 }, { -2, -2,  1, -2 }, { -3, -1,  2, -1 },
-    { -4,  0,  3,  0 }, { -4,  1,  3,  1 }
-};
+// Up/left are mirrors of down/right so opposite directions share the same
+// bbox centering.
 static const ArrowSeg keramikDownArrow[] = {
     { -4, -2,  3, -2 }, { -4, -1,  3, -1 }, { -3,  0,  2,  0 },
     { -2,  1,  1,  1 }, { -1,  2,  0,  2 }
 };
-static const ArrowSeg keramikLeftArrow[] = {
-    { -3, -1, -3,  0 }, { -2, -2, -2,  1 }, { -1, -3, -1,  2 },
-    {  0, -4,  0,  3 }, {  1, -4,  1,  3 }
+static const ArrowSeg keramikUpArrow[] = {
+    { -1, -2,  0, -2 }, { -2, -1,  1, -1 }, { -3,  0,  2,  0 },
+    { -4,  1,  3,  1 }, { -4,  2,  3,  2 }
 };
 static const ArrowSeg keramikRightArrow[] = {
     { -2, -4, -2,  3 }, { -1, -4, -1,  3 }, {  0, -3,  0,  2 },
     {  1, -2,  1,  1 }, {  2, -1,  2,  0 }
 };
+static const ArrowSeg keramikLeftArrow[] = {
+    { -2, -1, -2,  0 }, { -1, -2, -1,  1 }, {  0, -3,  0,  2 },
+    {  1, -4,  1,  3 }, {  2, -4,  2,  3 }
+};
 static const ArrowSeg keramikComboArrow[] = {
-    { -4, -5,  4, -5 }, { -2, -2,  2, -2 }, { -2, -1,  2, -1 },
+    { -2, -2,  2, -2 }, { -2, -1,  2, -1 },
     { -2,  0,  2,  0 }, { -4,  1,  4,  1 }, { -3,  2,  3,  2 },
     { -2,  3,  2,  3 }, { -1,  4,  1,  4 }, {  0,  5,  0,  5 }
 };
+
+// Centre the glyph's axis-aligned bbox in r on both axes.  Leftover pixels
+// follow Qt's AlignCenter convention (far / bottom-right side).
+static void arrowOrigin(const QRect &r, const ArrowSeg *seg, int count,
+                        int *cx, int *cy)
+{
+    int minX = 127, minY = 127, maxX = -128, maxY = -128;
+    for (int i = 0; i < count; ++i) {
+        minX = qMin(minX, qMin(int(seg[i].x1), int(seg[i].x2)));
+        maxX = qMax(maxX, qMax(int(seg[i].x1), int(seg[i].x2)));
+        minY = qMin(minY, qMin(int(seg[i].y1), int(seg[i].y2)));
+        maxY = qMax(maxY, qMax(int(seg[i].y1), int(seg[i].y2)));
+    }
+    const int gw = maxX - minX + 1;
+    const int gh = maxY - minY + 1;
+    *cx = r.left() + (r.width() - gw) / 2 - minX;
+    *cy = r.top() + (r.height() - gh) / 2 - minY;
+}
 
 void KeramikStyle::drawArrow(QPainter *p, PrimitiveElement pe, const QRect &r,
                              const QColor &color, const QColor *etch) const
 {
     const ArrowSeg *seg = nullptr;
+    int count = 0;
     switch (pe) {
-    case PE_IndicatorArrowUp:    seg = keramikUpArrow; break;
-    case PE_IndicatorArrowDown:  seg = keramikDownArrow; break;
-    case PE_IndicatorArrowLeft:  seg = keramikLeftArrow; break;
-    case PE_IndicatorArrowRight: seg = keramikRightArrow; break;
-    default: return;
+    case PE_IndicatorArrowUp:
+        seg = keramikUpArrow;
+        count = int(sizeof keramikUpArrow / sizeof *keramikUpArrow);
+        break;
+    case PE_IndicatorArrowDown:
+        seg = keramikDownArrow;
+        count = int(sizeof keramikDownArrow / sizeof *keramikDownArrow);
+        break;
+    case PE_IndicatorArrowLeft:
+        seg = keramikLeftArrow;
+        count = int(sizeof keramikLeftArrow / sizeof *keramikLeftArrow);
+        break;
+    case PE_IndicatorArrowRight:
+        seg = keramikRightArrow;
+        count = int(sizeof keramikRightArrow / sizeof *keramikRightArrow);
+        break;
+    default:
+        return;
     }
 
-    const int cx = r.center().x();
-    const int cy = r.center().y();
+    int cx, cy;
+    arrowOrigin(r, seg, count, &cx, &cy);
 
+    // Crisp pixel slices: AA softens the thin lines and shifts the perceived
+    // centre of the triangle on odd-sized scroll-bar buttons.
     p->save();
-    p->setRenderHint(QPainter::Antialiasing, true);
+    p->setRenderHint(QPainter::Antialiasing, false);
     if (etch) {
         p->setPen(QPen(*etch, 1));
-        for (int i = 0; i < 5; ++i)
+        for (int i = 0; i < count; ++i)
             p->drawLine(cx + seg[i].x1 + 1, cy + seg[i].y1 + 1,
                         cx + seg[i].x2 + 1, cy + seg[i].y2 + 1);
     }
     p->setPen(QPen(color, 1));
-    for (int i = 0; i < 5; ++i)
+    for (int i = 0; i < count; ++i)
         p->drawLine(cx + seg[i].x1, cy + seg[i].y1,
                     cx + seg[i].x2, cy + seg[i].y2);
     p->restore();
@@ -257,13 +303,14 @@ void KeramikStyle::drawArrow(QPainter *p, PrimitiveElement pe, const QRect &r,
 void KeramikStyle::drawComboArrow(QPainter *p, const QRect &r,
                                   const QColor &color) const
 {
-    const int cx = r.center().x();
-    const int cy = r.center().y();
+    const int count = int(sizeof keramikComboArrow / sizeof *keramikComboArrow);
+    int cx, cy;
+    arrowOrigin(r, keramikComboArrow, count, &cx, &cy);
 
     p->save();
-    p->setRenderHint(QPainter::Antialiasing, true);
+    p->setRenderHint(QPainter::Antialiasing, false);
     p->setPen(QPen(color, 1));
-    for (int i = 0; i < 9; ++i)
+    for (int i = 0; i < count; ++i)
         p->drawLine(cx + keramikComboArrow[i].x1, cy + keramikComboArrow[i].y1,
                     cx + keramikComboArrow[i].x2, cy + keramikComboArrow[i].y2);
     p->restore();
@@ -271,13 +318,28 @@ void KeramikStyle::drawComboArrow(QPainter *p, const QRect &r,
 
 void KeramikStyle::drawCheckMark(QPainter *p, const QRect &r, const QColor &color) const
 {
-    const qreal cx = r.center().x();
-    const qreal cy = r.center().y();
+    // Single source for the tick geometry; bbox centering keeps the longer
+    // upper arm from parking the glyph toward the top-left of r.
+    static const QPointF pts[] = {
+        QPointF(-3.0,  0.0),
+        QPointF(-1.0,  2.5),
+        QPointF( 3.5, -2.5),
+    };
+    qreal minX = pts[0].x(), maxX = pts[0].x();
+    qreal minY = pts[0].y(), maxY = pts[0].y();
+    for (const QPointF &pt : pts) {
+        minX = qMin(minX, pt.x());
+        maxX = qMax(maxX, pt.x());
+        minY = qMin(minY, pt.y());
+        maxY = qMax(maxY, pt.y());
+    }
+    const qreal ox = r.left() + (r.width() - (maxX - minX)) / 2.0 - minX;
+    const qreal oy = r.top() + (r.height() - (maxY - minY)) / 2.0 - minY;
 
     QPainterPath path;
-    path.moveTo(cx - 3.0, cy);
-    path.lineTo(cx - 1.0, cy + 2.5);
-    path.lineTo(cx + 3.5, cy - 2.5);
+    path.moveTo(ox + pts[0].x(), oy + pts[0].y());
+    for (int i = 1; i < int(sizeof pts / sizeof *pts); ++i)
+        path.lineTo(ox + pts[i].x(), oy + pts[i].y());
 
     p->save();
     p->setRenderHint(QPainter::Antialiasing, true);
@@ -287,35 +349,51 @@ void KeramikStyle::drawCheckMark(QPainter *p, const QRect &r, const QColor &colo
     p->restore();
 }
 
-void KeramikStyle::drawRipple(QPainter *p, const QRect &r, const QColor &color) const
+// The signature Keramik "ripple": three slightly wavy vertical strokes next
+// to the combo-box arrow.  Drawn etched -- a light pass one pixel down/right,
+// then a dark main pass on top -- so it reads as pressed-in grooves instead
+// of the high-contrast black stripes of the original version.
+void KeramikStyle::drawRipple(QPainter *p, const QStyleOption *opt, const QRect &r) const
 {
     if (r.width() < 6 || r.height() < 8)
         return;
 
+    const KeramikColors *c = colors(opt->palette);
+    const QColor dark = (opt->state & State_Enabled)
+            ? c->innerBottom : c->border;
+    const QColor light = opt->palette.color(QPalette::Light);
+
+    const auto strokes = [p, &r](qreal dx, qreal dy) {
+        const qreal top = r.top() + 1 + dy;
+        const qreal bottom = r.bottom() - 1 + dy;
+        const qreal span = bottom - top;
+        const qreal cx = r.center().x() + dx;
+        for (int i = -1; i <= 1; ++i) {
+            const qreal x = cx + i * 2.0;
+            QPainterPath path;
+            path.moveTo(x, top);
+            path.cubicTo(x + 1.2, top + span * 0.30,
+                         x - 1.2, top + span * 0.55,
+                         x, top + span * 0.82);
+            path.lineTo(x, bottom);
+            p->drawPath(path);
+        }
+    };
+
     p->save();
     p->setRenderHint(QPainter::Antialiasing, true);
-    p->setPen(QPen(color, 1));
-    const qreal top = r.top() + 1;
-    const qreal bottom = r.bottom() - 1;
-    const qreal span = bottom - top;
-    const qreal cx = r.center().x();
-
-    // Three slightly wavy vertical strokes, the signature Keramik "ripple".
-    for (int i = -1; i <= 1; ++i) {
-        const qreal x = cx + i * 2.0;
-        QPainterPath path;
-        path.moveTo(x, top);
-        path.cubicTo(x + 1.2, top + span * 0.30,
-                     x - 1.2, top + span * 0.55,
-                     x, top + span * 0.82);
-        path.lineTo(x, bottom);
-        p->drawPath(path);
-    }
+    p->setPen(QPen(light, 1));
+    strokes(1, 1);
+    p->setPen(QPen(dark, 1));
+    strokes(0, 0);
     p->restore();
 }
 
-// Button bevel: vertical gradient fill, thin rounded frame, bright top rim.
-void KeramikStyle::drawButtonPanel(QPainter *p, const QStyleOption *opt) const
+// Button bevel: vertical gradient fill, thin frame, bright top rim.
+// Free-standing buttons keep rounded corners; flush inside-controls pass
+// rounded=false for a square panel that butts against its neighbour.
+void KeramikStyle::drawButtonPanel(QPainter *p, const QStyleOption *opt,
+                                   bool rounded) const
 {
     const KeramikColors *c = colors(opt->palette);
     const QRect r = opt->rect;
@@ -340,27 +418,50 @@ void KeramikStyle::drawButtonPanel(QPainter *p, const QStyleOption *opt) const
     }
 
     p->save();
-    p->setRenderHint(QPainter::Antialiasing, true);
-    const QPainterPath shape = roundedRect(r.adjusted(0, 0, -1, -1), 3);
-
     QLinearGradient grad(r.left(), r.top(), r.left(), r.bottom());
     grad.setColorAt(0.0, top);
     grad.setColorAt(1.0, bottom);
-    p->setPen(Qt::NoPen);
-    p->setBrush(grad);
-    p->drawPath(shape);
+    const QPen borderPen(disabled ? c->border.lighter(125)
+                                  : isDefault ? c->border.darker(112) : c->border, 0);
 
-    p->setBrush(Qt::NoBrush);
-    p->setPen(disabled ? c->border.lighter(125)
-                       : isDefault ? c->border.darker(112) : c->border);
-    p->drawPath(shape);
+    if (rounded) {
+        // Half-pixel face + cosmetic pen (Plastique recipe) keeps AA arcs
+        // off the extreme corner pixels.
+        const QRectF face = QRectF(r).adjusted(0.5, 0.5, -0.5, -0.5);
+        p->setRenderHint(QPainter::Antialiasing, true);
+        p->setPen(Qt::NoPen);
+        p->setBrush(grad);
+        p->drawRoundedRect(face, 3.0, 3.0);
+        p->setBrush(Qt::NoBrush);
+        p->setPen(borderPen);
+        p->drawRoundedRect(face, 3.0, 3.0);
+    } else {
+        // Fill the full rect, stroke the inner QRect edges.  Stroking
+        // QRectF(r) would put the right/bottom on the next pixel and the
+        // widget clips them — the face then looks shifted one pixel left.
+        p->setRenderHint(QPainter::Antialiasing, false);
+        p->setPen(Qt::NoPen);
+        p->setBrush(grad);
+        p->drawRect(r);
+        p->setBrush(Qt::NoBrush);
+        p->setPen(borderPen);
+        p->drawRect(r.adjusted(0, 0, -1, -1));
+    }
 
     if (!disabled) {
-        // Ceramic sheen along the top edge.
+        // Sheen is 1px orthogonal lines — AA would blur them and can leave
+        // dark crumbs next to the rounded rim.
+        p->setRenderHint(QPainter::Antialiasing, false);
         p->setPen(c->innerTop);
         p->drawLine(r.left() + 3, r.top() + 1, r.right() - 3, r.top() + 1);
-        p->setPen(sunken ? c->innerBottom : c->innerTop);
-        p->drawLine(r.left() + 1, r.top() + 3, r.left() + 1, r.bottom() - 3);
+        // Free-standing (rounded) buttons keep the classic left bevel
+        // highlight.  Flush square panels (scroll-bar / spin-box) skip it:
+        // a bright column on the left only makes the face look shifted left
+        // against a flat track.
+        if (rounded) {
+            p->setPen(sunken ? c->innerBottom : c->innerTop);
+            p->drawLine(r.left() + 1, r.top() + 3, r.left() + 1, r.bottom() - 3);
+        }
         if (!sunken) {
             p->setPen(c->innerBottom);
             p->drawLine(r.left() + 3, r.bottom() - 1, r.right() - 3, r.bottom() - 1);
@@ -398,8 +499,12 @@ void KeramikStyle::drawWell(QPainter *p, const QStyleOption *opt) const
 
 // Accent panel: palette-highlight gradient with a thin frame. Used for the
 // slider thumb, scroll-bar handle, progress chunks, selections and menus.
+// These are all content/inside controls, so the panel is square like the
+// original Keramik (only free-standing buttons keep rounded corners).
+// inset=true (default) pulls the face 1px in so it sits inside a recessed
+// groove; scroll-bar thumbs pass false to sit flush on the flat track.
 void KeramikStyle::drawHighlightPanel(QPainter *p, const QStyleOption *opt,
-                                      const QRect &r, int radius) const
+                                      const QRect &r, bool inset) const
 {
     const KeramikColors *c = colors(opt->palette);
     const bool active = opt->state & (State_Sunken | State_MouseOver | State_On | State_Selected);
@@ -417,52 +522,55 @@ void KeramikStyle::drawHighlightPanel(QPainter *p, const QStyleOption *opt,
     }
 
     p->save();
-    p->setRenderHint(QPainter::Antialiasing, true);
-    const QPainterPath shape = roundedRect(r.adjusted(0, 0, -1, -1), radius);
+    p->setRenderHint(QPainter::Antialiasing, false);
+    const QRect box = inset ? r.adjusted(1, 1, -1, -1) : r;
 
     QLinearGradient grad(r.left(), r.top(), r.left(), r.bottom());
     grad.setColorAt(0.0, top);
     grad.setColorAt(1.0, bottom);
     p->setPen(Qt::NoPen);
     p->setBrush(grad);
-    p->drawPath(shape);
+    p->drawRect(box);
 
     p->setBrush(Qt::NoBrush);
     p->setPen(disabled ? c->highlightBorder.lighter(130) : c->highlightBorder);
-    p->drawPath(shape);
+    p->drawRect(box.adjusted(0, 0, -1, -1));
 
     if (!disabled) {
         p->setPen(top.lighter(108));
-        p->drawLine(r.left() + 2, r.top() + 1, r.right() - 2, r.top() + 1);
+        p->drawLine(box.left() + 3, box.top() + 1, box.right() - 3, box.top() + 1);
     }
     p->restore();
 }
 
-// Recessed track/groove strip (slider groove, progress groove, scroll track).
-void KeramikStyle::drawGroove(QPainter *p, const QStyleOption *opt, const QRect &r) const
+// Track strip: flat fill + thin border.  Sliders / progress bars pass
+// recessed=true for the L-shaped inner shadow; scroll-bar tracks pass false
+// so the strip stays flat (still painted — not Window-coloured invisible).
+// Square: tracks sit flush against neighbours, so no rounded edge.
+void KeramikStyle::drawGroove(QPainter *p, const QStyleOption *opt, const QRect &r,
+                              bool recessed) const
 {
     const KeramikColors *c = colors(opt->palette);
     if (r.width() <= 0 || r.height() <= 0)
         return;
 
     p->save();
-    p->setRenderHint(QPainter::Antialiasing, true);
-    const QPainterPath shape = roundedRect(r.adjusted(0, 0, -1, -1), 1);
+    p->setRenderHint(QPainter::Antialiasing, false);
 
     p->setPen(Qt::NoPen);
     p->setBrush(c->wellBase.darker(106));
-    p->drawPath(shape);
+    p->drawRect(r);
 
     p->setBrush(Qt::NoBrush);
     p->setPen(c->border.lighter(118));
-    p->drawPath(shape);
+    p->drawRect(r.adjusted(0, 0, -1, -1));
 
-    // Inner top/left shadow.
-    p->setPen(c->innerBottom);
-    if (opt->state & State_Horizontal)
-        p->drawLine(r.left() + 2, r.top() + 1, r.right() - 2, r.top() + 1);
-    else
-        p->drawLine(r.left() + 1, r.top() + 2, r.left() + 1, r.bottom() - 2);
+    if (recessed) {
+        // Recessed L-shaped inner shadow: dark along top and left.
+        p->setPen(c->innerBottom);
+        p->drawLine(r.left() + 1, r.top() + 1, r.right() - 2, r.top() + 1);
+        p->drawLine(r.left() + 1, r.top() + 1, r.left() + 1, r.bottom() - 2);
+    }
     p->restore();
 }
 
@@ -478,34 +586,36 @@ void KeramikStyle::drawCheckBoxIndicator(QPainter *p, const QStyleOption *opt,
     if (hover && !disabled)
         base = base.lighter(104);
 
-    p->save();
-    p->setRenderHint(QPainter::Antialiasing, true);
-    const QPainterPath shape = roundedRect(r.adjusted(0, 0, -1, -1), 3);
+    // Symmetric 1px inset so a 13×13 indicator does not hug the top-left.
+    // Square box — Keramik checkboxes are not rounded.
+    const QRect box = r.adjusted(1, 1, -1, -1);
 
+    p->save();
+    p->setRenderHint(QPainter::Antialiasing, false);
     p->setPen(Qt::NoPen);
     p->setBrush(base);
-    p->drawPath(shape);
+    p->drawRect(box);
 
     p->setBrush(Qt::NoBrush);
-    p->setPen(disabled ? c->border.lighter(120) : c->border);
-    p->drawPath(shape);
+    p->setPen(QPen(disabled ? c->border.lighter(120) : c->border, 0));
+    p->drawRect(box.adjusted(0, 0, -1, -1));
 
     // Sunken bevel inside the box.
     p->setPen(c->innerBottom);
-    p->drawLine(r.left() + 2, r.top() + 1, r.right() - 3, r.top() + 1);
-    p->drawLine(r.left() + 1, r.top() + 2, r.left() + 1, r.bottom() - 3);
+    p->drawLine(box.left() + 1, box.top() + 1, box.right() - 1, box.top() + 1);
+    p->drawLine(box.left() + 1, box.top() + 1, box.left() + 1, box.bottom() - 1);
     p->setPen(opt->palette.color(QPalette::Light));
-    p->drawLine(r.left() + 2, r.bottom() - 2, r.right() - 3, r.bottom() - 2);
-    p->drawLine(r.right() - 2, r.top() + 2, r.right() - 2, r.bottom() - 3);
+    p->drawLine(box.left() + 1, box.bottom() - 1, box.right() - 1, box.bottom() - 1);
+    p->drawLine(box.right() - 1, box.top() + 1, box.right() - 1, box.bottom() - 1);
 
     if (on || tri) {
         QColor mark = disabled ? c->border
                                : opt->palette.color(QPalette::ButtonText);
         if (tri) {
             p->setPen(QPen(mark, 1.6));
-            p->drawLine(r.left() + 3, r.center().y(), r.right() - 3, r.center().y());
+            p->drawLine(box.left() + 2, box.center().y(), box.right() - 2, box.center().y());
         } else {
-            drawCheckMark(p, r.adjusted(0, 0, -1, -1), mark);
+            drawCheckMark(p, box, mark);
         }
     }
     p->restore();
@@ -532,7 +642,7 @@ void KeramikStyle::drawRadioIndicator(QPainter *p, const QStyleOption *opt, bool
     p->drawPath(circle);
 
     p->setBrush(Qt::NoBrush);
-    p->setPen(disabled ? c->border.lighter(120) : c->border);
+    p->setPen(QPen(disabled ? c->border.lighter(120) : c->border, 0));
     p->drawPath(circle);
 
     // Inner bevel arc: dark upper-left, light lower-right.
@@ -563,7 +673,7 @@ void KeramikStyle::drawScrollBarButton(QPainter *p, const QStyleOption *opt,
 
     QStyleOption btn(*opt);
     btn.rect = r;
-    drawButtonPanel(p, &btn);
+    drawButtonPanel(p, &btn, false);
 
     QColor arrowColor = disabled ? c->border
                                  : down ? c->border : opt->palette.color(QPalette::ButtonText);
@@ -625,6 +735,470 @@ void KeramikStyle::drawMenuCheckPanel(QPainter *p, const QRect &r,
 }
 
 // ---------------------------------------------------------------------------
+// Modern-control drawing helpers
+// ---------------------------------------------------------------------------
+
+// QToolButton: pressed/checked/hover bevel, focus frame, and the drop-down
+// menu indicator (MenuButtonPopup gets a separated arrow half, InstantPopup a
+// small corner arrow).  The layout mirrors QCommonStyle's CC_ToolButton so the
+// auto-raise logic keeps plain toolbar icons flat until hovered.
+void KeramikStyle::drawToolButton(QPainter *p, const QStyleOption *opt,
+                                  const QWidget *widget) const
+{
+    const QStyleOptionToolButton *toolBtn = qstyleoption_cast<const QStyleOptionToolButton *>(opt);
+    if (!toolBtn)
+        return;
+
+    const KeramikColors *c = colors(opt->palette);
+
+    const QRect button = subControlRect(CC_ToolButton, toolBtn, SC_ToolButton, widget);
+    const QRect menuarea = subControlRect(CC_ToolButton, toolBtn, SC_ToolButtonMenu, widget);
+
+    State bflags = toolBtn->state & ~State_Sunken;
+    if (bflags & State_AutoRaise) {
+        if (!(bflags & State_MouseOver) || !(bflags & State_Enabled))
+            bflags &= ~State_Raised;
+    }
+    State mflags = bflags;
+    if (toolBtn->state & State_Sunken) {
+        if (toolBtn->activeSubControls & SC_ToolButton)
+            bflags |= State_Sunken;
+        mflags |= State_Sunken;
+    }
+
+    if (toolBtn->subControls & SC_ToolButton) {
+        if (bflags & (State_Sunken | State_On | State_Raised)) {
+            QStyleOption tool(*opt);
+            tool.rect = button;
+            tool.state = bflags;
+            drawButtonPanel(p, &tool);
+        }
+    }
+
+    if (toolBtn->state & State_HasFocus) {
+        QStyleOptionFocusRect fr;
+        fr.QStyleOption::operator=(*toolBtn);
+        fr.rect.adjust(3, 3, -3, -3);
+        if (toolBtn->features & QStyleOptionToolButton::MenuButtonPopup)
+            fr.rect.adjust(0, 0, -pixelMetric(PM_MenuButtonIndicator, opt, widget), 0);
+        drawPrimitive(PE_FrameFocusRect, &fr, p, widget);
+    }
+
+    QStyleOptionToolButton label(*toolBtn);
+    label.state = bflags;
+    const int fw = pixelMetric(PM_DefaultFrameWidth, opt, widget);
+    label.rect = button.adjusted(fw, fw, -fw, -fw);
+    QProxyStyle::drawControl(CE_ToolButtonLabel, &label, p, widget);
+
+    if (toolBtn->subControls & SC_ToolButtonMenu) {
+        // The separated arrow half of a MenuButtonPopup button: a pressed
+        // ceramic panel while the arrow is active, hover feedback otherwise,
+        // plus a thin divider from the button face when idle.
+        QStyleOption menu(*opt);
+        menu.rect = menuarea;
+        menu.state = mflags;
+        if (mflags & (State_Sunken | State_On | State_Raised))
+            drawButtonPanel(p, &menu);
+        else {
+            p->save();
+            p->setPen(c->border.lighter(150));
+            const int x = toolBtn->direction == Qt::RightToLeft
+                    ? menuarea.right() : menuarea.left();
+            p->drawLine(x, menuarea.top() + 2, x, menuarea.bottom() - 2);
+            p->restore();
+        }
+        drawArrow(p, PE_IndicatorArrowDown, menuarea.adjusted(0, 2, 0, -2),
+                  (mflags & State_Enabled)
+                          ? opt->palette.color(QPalette::ButtonText) : c->border);
+    } else if (toolBtn->features & QStyleOptionToolButton::HasMenu) {
+        // InstantPopup: a small arrow tucked into the lower corner.
+        const int mbi = pixelMetric(PM_MenuButtonIndicator, opt, widget);
+        const int aw = mbi - 4;
+        QRect ar(button.right() + 4 - mbi, button.bottom() - aw - 1,
+                 aw, aw);
+        ar = visualRect(toolBtn->direction, button, ar);
+        drawArrow(p, PE_IndicatorArrowDown, ar,
+                  (bflags & State_Enabled)
+                          ? opt->palette.color(QPalette::ButtonText) : c->border);
+    }
+}
+
+// QGroupBox: a thin two-pixel ceramic frame interrupted by the title, with a
+// proper label and a checkable-group indicator.
+void KeramikStyle::drawGroupBox(QPainter *p, const QStyleOption *opt,
+                                const QWidget *widget) const
+{
+    const QStyleOptionGroupBox *gb = qstyleoption_cast<const QStyleOptionGroupBox *>(opt);
+    if (!gb)
+        return;
+
+    QRect textRect = subControlRect(CC_GroupBox, gb, SC_GroupBoxLabel, widget);
+    QRect checkRect = subControlRect(CC_GroupBox, gb, SC_GroupBoxCheckBox, widget);
+    const bool flat = gb->features & QStyleOptionFrame::Flat;
+
+    if (gb->subControls & SC_GroupBoxFrame && !flat) {
+        QStyleOptionFrame frame;
+        frame.QStyleOption::operator=(*gb);
+        frame.rect = subControlRect(CC_GroupBox, gb, SC_GroupBoxFrame, widget);
+        // Clip the top edge where the title sits so the frame line is
+        // interrupted (the same trick as QCommonStyle).
+        p->save();
+        QRegion region(gb->rect);
+        const bool ltr = gb->direction == Qt::LeftToRight;
+        region -= checkRect.united(textRect).adjusted(ltr ? -4 : 0, 0, ltr ? 0 : 4, 0);
+        if (!gb->text.isEmpty() || gb->subControls & SC_GroupBoxCheckBox)
+            p->setClipRegion(region);
+        drawPrimitive(PE_FrameGroupBox, &frame, p, widget);
+        p->restore();
+    }
+
+    if (gb->subControls & SC_GroupBoxLabel && !gb->text.isEmpty()) {
+        p->save();
+        const QColor textColor = gb->textColor.isValid()
+                ? gb->textColor : gb->palette.color(QPalette::WindowText);
+        p->setPen(textColor);
+        int alignment = int(gb->textAlignment);
+        if (!styleHint(SH_UnderlineShortcut, opt, widget))
+            alignment |= Qt::TextHideMnemonic;
+        if (flat) {
+            QFont font = p->font();
+            font.setBold(true);
+            p->setFont(font);
+            if (gb->subControls & SC_GroupBoxCheckBox)
+                textRect.adjust(checkRect.right() + 4, 0, checkRect.right() + 4, 0);
+        }
+        p->drawText(textRect, Qt::TextShowMnemonic | Qt::AlignLeft | alignment, gb->text);
+        p->restore();
+    }
+
+    if (gb->subControls & SC_GroupBoxCheckBox) {
+        QStyleOptionButton box;
+        box.QStyleOption::operator=(*gb);
+        box.rect = checkRect;
+        drawPrimitive(PE_IndicatorCheckBox, &box, p, widget);
+    }
+}
+
+// QToolBox tab: a full-width ceramic button; the current tab is sunken.
+// Square-edged so it fuses with the page below and the neighbouring tabs.
+void KeramikStyle::drawToolBoxTab(QPainter *p, const QStyleOption *opt) const
+{
+    const QRect r = opt->rect;
+    QStyleOption btn(*opt);
+    if (opt->state & (State_Sunken | State_On | State_Selected))
+        btn.state |= State_Sunken;
+    drawButtonPanel(p, &btn, false);
+    p->save();
+    p->setPen(colors(opt->palette)->border.lighter(150));
+    p->drawLine(r.left(), r.bottom() - 1, r.right(), r.bottom() - 1);
+    p->restore();
+}
+
+// QDockWidget title: a ceramic bevel strip with the (possibly rotated) title.
+void KeramikStyle::drawDockWidgetTitle(QPainter *p, const QStyleOption *opt) const
+{
+    const QStyleOptionDockWidget *dw = qstyleoption_cast<const QStyleOptionDockWidget *>(opt);
+    if (!dw)
+        return;
+
+    const KeramikColors *c = colors(opt->palette);
+    const QRect r = opt->rect;
+
+    QLinearGradient grad(r.left(), r.top(), r.left(), r.bottom());
+    grad.setColorAt(0.0, c->gradientTop);
+    grad.setColorAt(1.0, c->gradientBottom);
+    p->save();
+    p->setPen(Qt::NoPen);
+    p->setBrush(grad);
+    p->drawRect(r);
+    p->setPen(c->border);
+    p->drawLine(r.left(), r.bottom(), r.right(), r.bottom());
+    p->restore();
+
+    QRect rect = r.adjusted(6, 0, -4, 0);
+    if (dw->closable)
+        rect.adjust(0, 0, -16, 0);
+    if (dw->floatable)
+        rect.adjust(0, 0, -16, 0);
+
+    const bool vertical =
+#if QT_VERSION >= QT_VERSION_CHECK(6, 0, 0)
+            dw->verticalTitleBar;
+#else
+            false;   // Qt 5 dock titles are always horizontal
+#endif
+    const int textLength = vertical ? r.height() : rect.width();
+    const QString text = p->fontMetrics().elidedText(dw->title, Qt::ElideRight,
+                                                     qMax(textLength, 1));
+    if (vertical) {
+        p->save();
+        p->translate(r.center());
+        p->rotate(-90);
+        QRect vr(-r.height() / 2, -r.width() / 2, r.height(), r.width());
+        drawItemText(p, vr, Qt::AlignCenter, opt->palette,
+                     opt->state & State_Enabled, text, QPalette::WindowText);
+        p->restore();
+    } else {
+        drawItemText(p, rect, Qt::AlignLeft | Qt::AlignVCenter, opt->palette,
+                     opt->state & State_Enabled, text, QPalette::WindowText);
+    }
+}
+
+// QToolTip: the classic light-yellow tip with a thin 3-D bevel.
+void KeramikStyle::drawToolTip(QPainter *p, const QStyleOption *opt) const
+{
+    const QRect r = opt->rect;
+    p->save();
+    p->setPen(Qt::NoPen);
+    p->setBrush(opt->palette.color(QPalette::ToolTipBase));
+    p->drawRect(r);
+    p->setPen(opt->palette.color(QPalette::Light));
+    p->drawLine(r.left(), r.top(), r.right() - 1, r.top());
+    p->drawLine(r.left(), r.top(), r.left(), r.bottom() - 1);
+    p->setPen(opt->palette.color(QPalette::Mid));
+    p->drawLine(r.left(), r.bottom() - 1, r.right() - 1, r.bottom() - 1);
+    p->drawLine(r.right() - 1, r.top(), r.right() - 1, r.bottom() - 1);
+    p->restore();
+}
+
+// CE_SizeGrip: diagonal light/dark dots in the status-bar corner.
+void KeramikStyle::drawSizeGrip(QPainter *p, const QStyleOption *opt) const
+{
+    const QRect r = opt->rect;
+    const QPalette &pal = opt->palette;
+    const QColor dark = pal.color(QPalette::Mid);
+    const QColor light = pal.color(QPalette::Light);
+
+    p->save();
+    for (int i = 0; i < 4; ++i) {
+        for (int j = 0; j <= i; ++j) {
+            const int x = r.right() - 3 - j * 4;
+            const int y = r.bottom() - 3 - i * 4;
+            p->setPen(dark);
+            p->drawPoint(x, y);
+            p->setPen(light);
+            p->drawPoint(x + 1, y + 1);
+        }
+    }
+    p->restore();
+}
+
+// PE_IndicatorBranch: ceramic expander box + guide lines for tree views.
+void KeramikStyle::drawBranch(QPainter *p, const QStyleOption *opt) const
+{
+    const QRect r = opt->rect;
+    const QPalette &pal = opt->palette;
+    const int cx = r.center().x();
+    const int cy = r.center().y();
+
+    p->save();
+    p->setRenderHint(QPainter::Antialiasing, false);
+
+    int spacer = 0;
+    if (opt->state & State_Children) {
+        // A small raised box holding a filled triangle arrow.
+        const QRect box(cx - 4, cy - 4, 9, 9);
+        p->setPen(pal.color(QPalette::Mid));
+        p->setBrush(pal.color(QPalette::Button));
+        p->drawRect(box);
+        p->setPen(pal.color(QPalette::Light));
+        p->drawLine(box.left() + 1, box.top() + 1, box.right() - 1, box.top() + 1);
+        p->drawLine(box.left() + 1, box.top() + 1, box.left() + 1, box.bottom() - 1);
+        p->setPen(Qt::NoPen);
+        p->setBrush(pal.color(QPalette::ButtonText));
+        if (opt->state & State_Open) {
+            p->drawPolygon(QPolygon() << QPoint(cx - 2, cy - 1)
+                                      << QPoint(cx + 2, cy - 1)
+                                      << QPoint(cx, cy + 2));
+        } else if (opt->direction == Qt::RightToLeft) {
+            // Collapsed branch arrow points left in RTL, right in LTR,
+            // matching QCommonStyle (the original had the two swapped).
+            p->drawPolygon(QPolygon() << QPoint(cx + 1, cy - 2)
+                                      << QPoint(cx + 1, cy + 2)
+                                      << QPoint(cx - 2, cy));
+        } else {
+            p->drawPolygon(QPolygon() << QPoint(cx - 1, cy - 2)
+                                      << QPoint(cx - 1, cy + 2)
+                                      << QPoint(cx + 2, cy));
+        }
+        spacer = 6;
+    }
+
+    // Guide lines to the row, siblings and ancestors.
+    p->setPen(pal.color(QPalette::Mid));
+    if (opt->state & State_Item) {
+        if (opt->direction == Qt::RightToLeft)
+            p->drawLine(r.left(), cy, cx - spacer, cy);
+        else
+            p->drawLine(cx + spacer, cy, r.right(), cy);
+    }
+    if (opt->state & State_Sibling)
+        p->drawLine(cx, cy + spacer, cx, r.bottom());
+    if (opt->state & (State_Item | State_Sibling))
+        p->drawLine(cx, cy - spacer, cx, r.top());
+
+    p->restore();
+}
+
+// CE_MenuScroller: the up/down arrows shown on over-long menus.
+void KeramikStyle::drawMenuScroller(QPainter *p, const QStyleOption *opt) const
+{
+    const QRect r = opt->rect;
+    p->save();
+    p->fillRect(r, menuSurfaceColor(opt->palette));
+    const bool up = opt->state & State_UpArrow;
+    const QColor arrow = opt->palette.color(QPalette::ButtonText);
+    drawArrow(p, up ? PE_IndicatorArrowUp : PE_IndicatorArrowDown, r, arrow);
+    p->restore();
+}
+
+// CE_ProgressBarContents: the ceramic highlight block (solid for determinate
+// bars, a travelling block for busy ones).  The busy offset comes from
+// QProgressBar's own animated value, advanced by the style's busy timer.
+void KeramikStyle::drawProgressContents(QPainter *p, const QStyleOption *opt) const
+{
+    const QStyleOptionProgressBar *pb = qstyleoption_cast<const QStyleOptionProgressBar *>(opt);
+    if (!pb)
+        return;
+
+    // QCommonStyle's CE_ProgressBar already routed us through
+    // subElementRect(SE_ProgressBarContents), so opt->rect is the contents
+    // rect.  Calling subElementRect again here would inset it a second time.
+    const QRect cr = opt->rect;
+    if (!cr.isValid())
+        return;
+
+    // Qt6's QStyleOptionProgressBar has no orientation member (Qt5 keeps the
+    // aspect ratio implied by the widget), so infer it from the rect.
+    const bool vertical = pb->rect.height() > pb->rect.width();
+    const bool reverse = vertical ? pb->invertedAppearance
+                                  : ((pb->direction == Qt::RightToLeft)
+                                     != pb->invertedAppearance);
+    const int total = qMax(pb->maximum - pb->minimum, 1);
+    const int progress = qMax(pb->progress, pb->minimum);
+    // A 0..0 range is the busy indicator; other min==max ranges are static
+    // (QCommonStyle and the animation timer both use this definition).
+    const bool busy = (pb->minimum == 0 && pb->maximum == 0);
+
+    p->save();
+    p->setClipRect(cr);
+
+    if (busy) {
+        // A single ceramic block travelling back and forth along the groove.
+        const int length = vertical ? cr.height() : cr.width();
+        const int chunk = qBound(10, length / 6, 30);
+        const int span = qMax(length - chunk, 1);
+        int pos = progress % (span * 2);
+        if (pos > span)
+            pos = span * 2 - pos;
+        QRect chunkRect;
+        if (vertical)
+            chunkRect = QRect(cr.left(), cr.top() + pos, cr.width(), chunk);
+        else
+            chunkRect = QRect(cr.left() + pos, cr.top(), chunk, cr.height());
+        drawHighlightPanel(p, opt, chunkRect);
+    } else if (progress > 0) {
+        QRect block;
+        if (vertical) {
+            const int h = cr.height() * progress / total;
+            block = reverse ? QRect(cr.left(), cr.top(), cr.width(), h)
+                            : QRect(cr.left(), cr.bottom() - h, cr.width(), h);
+        } else {
+            const int w = cr.width() * progress / total;
+            block = reverse ? QRect(cr.right() - w, cr.top(), w, cr.height())
+                            : QRect(cr.left(), cr.top(), w, cr.height());
+        }
+        // inset=true (default) pulls the block inside the groove's L-shadow.
+        drawHighlightPanel(p, opt, block);
+    }
+
+    p->restore();
+}
+
+// CE_ProgressBarLabel: single-pass black text centred in the bar.  Unlike the
+// two-pass highlighted/normal split, the label keeps one colour so it reads as
+// plain text over the groove and the ceramic block alike (the original Keramik
+// drew its progress text in the normal text colour).  Vertical bars rotate the
+// painter so the text reads along the bar.
+void KeramikStyle::drawProgressLabel(QPainter *p, const QStyleOptionProgressBar *pb) const
+{
+    if (pb->text.isEmpty())
+        return;
+
+    const QRect r = pb->rect;
+    const bool vertical = r.height() > r.width();
+    const int flags = Qt::AlignCenter | Qt::TextSingleLine;
+    const bool enabled = pb->state & State_Enabled;
+
+    p->save();
+    if (vertical) {
+        // Rotate the coordinate system so the bar's long axis is horizontal.
+        const QPoint c = r.center();
+        p->translate(c);
+        p->rotate(pb->bottomToTop ? -90 : 90);
+        p->translate(-c);
+    }
+    drawItemText(p, r, flags, pb->palette, enabled, pb->text, QPalette::Text);
+    p->restore();
+}
+
+// ---------------------------------------------------------------------------
+// Busy progress bar animation
+// ---------------------------------------------------------------------------
+
+void KeramikStyle::addProgressBar(QProgressBar *bar)
+{
+    if (!m_busyBars.contains(bar)) {
+        m_busyBars.append(bar);
+        if (!m_busyTimer->isActive())
+            m_busyTimer->start(30);
+    }
+}
+
+void KeramikStyle::removeProgressBar(QProgressBar *bar)
+{
+    m_busyBars.removeAll(bar);
+    if (m_busyBars.isEmpty())
+        m_busyTimer->stop();
+}
+
+// Advance every visible busy bar; setValue() repaints the widget itself, so no
+// explicit update() is needed.  CE_ProgressBarContents maps the value onto the
+// travelling chunk position.
+void KeramikStyle::animateProgressBars()
+{
+    for (QProgressBar *bar : m_busyBars) {
+        if (bar->isVisible() && bar->minimum() == 0 && bar->maximum() == 0)
+            bar->setValue(bar->value() + 2);
+    }
+}
+
+bool KeramikStyle::eventFilter(QObject *obj, QEvent *event)
+{
+    switch (event->type()) {
+    case QEvent::Show:
+    case QEvent::StyleChange:
+    case QEvent::Paint:
+        if (QProgressBar *bar = qobject_cast<QProgressBar *>(obj)) {
+            if (bar->isVisible() && bar->minimum() == 0 && bar->maximum() == 0)
+                addProgressBar(bar);
+            else
+                removeProgressBar(bar);
+        }
+        break;
+    case QEvent::Hide:
+    case QEvent::Destroy:
+        // Only progress bars get our filter installed, so the cast is safe
+        // even while the object is being destroyed.
+        removeProgressBar(static_cast<QProgressBar *>(obj));
+        break;
+    default:
+        break;
+    }
+    return QProxyStyle::eventFilter(obj, event);
+}
+
+// ---------------------------------------------------------------------------
 // Polish / unpolish
 // ---------------------------------------------------------------------------
 
@@ -641,10 +1215,24 @@ void KeramikStyle::polish(QWidget *widget)
         widget->setAttribute(Qt::WA_Hover);
         widget->setMouseTracking(true);
     }
+
+    if (qobject_cast<QProgressBar *>(widget))
+        widget->installEventFilter(this);
+
+    // The toolbox tabs are internal QAbstractButton subclasses without
+    // auto-raise, so enable hover on them explicitly.
+    if (qobject_cast<QToolBox *>(widget)) {
+        widget->setAttribute(Qt::WA_Hover);
+        const auto children = widget->findChildren<QWidget *>();
+        for (QWidget *child : children)
+            child->setAttribute(Qt::WA_Hover);
+    }
 }
 
 void KeramikStyle::polish(QPalette &palette)
 {
+    if (m_forceClassicPalette)
+        palette = standardPalette();
     QProxyStyle::polish(palette);
     // The original Keramik kept the palette as-is; the accent colour for
     // handles is the standard highlight role.
@@ -656,6 +1244,10 @@ void KeramikStyle::unpolish(QWidget *widget)
     QProxyStyle::unpolish(widget);
     widget->setAttribute(Qt::WA_Hover, false);
     widget->setMouseTracking(false);
+    if (qobject_cast<QProgressBar *>(widget)) {
+        widget->removeEventFilter(this);
+        removeProgressBar(static_cast<QProgressBar *>(widget));
+    }
 }
 
 // ---------------------------------------------------------------------------
@@ -682,12 +1274,14 @@ void KeramikStyle::drawPrimitive(PrimitiveElement pe, const QStyleOption *opt,
         break;
 
     case PE_FrameFocusRect: {
-        // Square dotted frame in the palette text colour, matching the
-        // original's drawWinFocusRect (a dotted black rectangle).
+        // Rounded dotted frame in the palette text colour, matching the
+        // original's drawWinFocusRect (a dotted black rectangle) but rounded
+        // so the dots stay on the control face instead of spilling past the
+        // corner arcs onto the background.
         p->save();
-        p->setPen(QPen(opt->palette.color(QPalette::Text), 1, Qt::DotLine));
+        p->setPen(QPen(opt->palette.color(QPalette::Text), 0, Qt::DotLine));
         p->setBrush(Qt::NoBrush);
-        p->drawRect(r.adjusted(0, 0, -1, -1));
+        p->drawRoundedRect(QRectF(r.adjusted(1, 1, -1, -1)), 3.0, 3.0);
         p->restore();
         break;
     }
@@ -719,8 +1313,9 @@ void KeramikStyle::drawPrimitive(PrimitiveElement pe, const QStyleOption *opt,
 
     case PE_IndicatorItemViewItemCheck: {
         QStyleOption box(*opt);
-        box.rect = r.adjusted(0, 0, -1, -1);
-        drawCheckBoxIndicator(p, &box, opt->state & State_On, false);
+        box.rect = r;
+        drawCheckBoxIndicator(p, &box, opt->state & State_On,
+                              opt->state & State_NoChange);
         break;
     }
 
@@ -743,15 +1338,21 @@ void KeramikStyle::drawPrimitive(PrimitiveElement pe, const QStyleOption *opt,
         break;
     }
 
-    case PE_IndicatorHeaderArrow:
-        drawArrow(p, opt->state & State_UpArrow ? PE_IndicatorArrowUp
-                                                : PE_IndicatorArrowDown,
+    case PE_IndicatorHeaderArrow: {
+        // Qt 6 CE_Header no longer sets State_UpArrow; read sortIndicator.
+        // Match QCommonStyle: SortUp → tip down, SortDown → tip up.
+        const QStyleOptionHeader *header = qstyleoption_cast<const QStyleOptionHeader *>(opt);
+        if (!header || header->sortIndicator == QStyleOptionHeader::None)
+            break;
+        const bool tipDown = header->sortIndicator == QStyleOptionHeader::SortUp;
+        drawArrow(p, tipDown ? PE_IndicatorArrowDown : PE_IndicatorArrowUp,
                   r, c->border);
         break;
+    }
 
     // Scroll-bar --------------------------------------------------------------
     case PE_IndicatorProgressChunk:
-        drawHighlightPanel(p, opt, r, 1);
+        drawHighlightPanel(p, opt, r);
         break;
 
     // Menus / menu bar ---------------------------------------------------------
@@ -872,7 +1473,7 @@ void KeramikStyle::drawPrimitive(PrimitiveElement pe, const QStyleOption *opt,
                 sel.state |= State_Selected;
                 sel.state &= ~State_MouseOver;
             }
-            drawHighlightPanel(p, &sel, r.adjusted(0, 0, -1, -1), 3);
+            drawHighlightPanel(p, &sel, r);
         }
         break;
 
@@ -899,6 +1500,61 @@ void KeramikStyle::drawPrimitive(PrimitiveElement pe, const QStyleOption *opt,
         break;
     }
 
+    // Group boxes ------------------------------------------------------------
+    case PE_FrameGroupBox: {
+        // A raised ceramic frame: outer light rim, inner highlight on the
+        // top/left and a mid tone on the bottom/right.
+        p->save();
+        p->setBrush(Qt::NoBrush);
+        p->setPen(c->border.lighter(150));
+        p->drawRect(r.adjusted(0, 0, -1, -1));
+        p->setPen(opt->palette.color(QPalette::Light));
+        p->drawLine(r.left() + 1, r.top() + 1, r.right() - 1, r.top() + 1);
+        p->drawLine(r.left() + 1, r.top() + 1, r.left() + 1, r.bottom() - 1);
+        p->setPen(opt->palette.color(QPalette::Mid));
+        p->drawLine(r.left() + 1, r.bottom() - 1, r.right() - 1, r.bottom() - 1);
+        p->drawLine(r.right() - 1, r.top() + 1, r.right() - 1, r.bottom() - 1);
+        p->restore();
+        break;
+    }
+
+    // Tool tips ---------------------------------------------------------------
+    case PE_PanelTipLabel:
+        drawToolTip(p, opt);
+        break;
+
+    // Tree branches -----------------------------------------------------------
+    case PE_IndicatorBranch:
+        drawBranch(p, opt);
+        break;
+
+    // Dock widgets -------------------------------------------------------------
+    case PE_FrameDockWidget: {
+        // Thin ceramic frame around each dock widget in the main window.
+        p->save();
+        p->setPen(c->border.lighter(140));
+        p->setBrush(Qt::NoBrush);
+        p->drawRect(r.adjusted(0, 0, -1, -1));
+        p->restore();
+        break;
+    }
+
+    case PE_IndicatorDockWidgetResizeHandle: {
+        // Three subtle dots marking the resize grip of a floating dock.
+        p->save();
+        p->setPen(opt->palette.color(QPalette::Mid));
+        const int n = 3;
+        for (int i = 0; i < n; ++i) {
+            const int off = (i - (n - 1) / 2) * 4;
+            if (r.width() >= r.height())
+                p->drawPoint(r.center().x() + off, r.center().y());
+            else
+                p->drawPoint(r.center().x(), r.center().y() + off);
+        }
+        p->restore();
+        break;
+    }
+
     case PE_Widget:
     default:
         QProxyStyle::drawPrimitive(pe, opt, p, widget);
@@ -919,7 +1575,6 @@ void KeramikStyle::drawTabShape(QPainter *p, const QStyleOptionTab *tab) const
     const bool north = (shape == QTabBar::RoundedNorth || shape == QTabBar::TriangularNorth);
     const bool south = (shape == QTabBar::RoundedSouth || shape == QTabBar::TriangularSouth);
     const bool east  = (shape == QTabBar::RoundedEast  || shape == QTabBar::TriangularEast);
-    const int corner = 3;
 
     // The active tab spans the whole tab-bar strip; inactive tabs are drawn
     // 3px back from the strip edge and 2px short of the open (page) side,
@@ -936,75 +1591,12 @@ void KeramikStyle::drawTabShape(QPainter *p, const QStyleOptionTab *tab) const
             tr.adjust(3, 0, -2, 0);
     }
 
-    // Fill shape and rim. The rounded edge faces away from the page; the page
-    // side is left open on the active tab so its fill fuses with the pane.
-    QPainterPath fill;
-    QPainterPath rim;
-    if (north || south) {
-        const int outerY = north ? tr.top() : tr.bottom();  // rounded edge
-        const int openY  = north ? tr.bottom() : tr.top();  // page side
-        if (north) {
-            fill.moveTo(tr.left(), openY);
-            fill.lineTo(tr.left(), outerY + corner);
-            fill.quadTo(tr.left(), outerY, tr.left() + corner, outerY);
-            fill.lineTo(tr.right() - corner, outerY);
-            fill.quadTo(tr.right(), outerY, tr.right(), outerY + corner);
-            fill.lineTo(tr.right(), openY);
-            rim.moveTo(tr.left(), outerY + corner);
-            rim.quadTo(tr.left(), outerY, tr.left() + corner, outerY);
-            rim.lineTo(tr.right() - corner, outerY);
-            rim.quadTo(tr.right(), outerY, tr.right(), outerY + corner);
-        } else {
-            fill.moveTo(tr.left(), openY);
-            fill.lineTo(tr.left(), outerY - corner);
-            fill.quadTo(tr.left(), outerY, tr.left() + corner, outerY);
-            fill.lineTo(tr.right() - corner, outerY);
-            fill.quadTo(tr.right(), outerY, tr.right(), outerY - corner);
-            fill.lineTo(tr.right(), openY);
-            rim.moveTo(tr.left(), outerY - corner);
-            rim.quadTo(tr.left(), outerY, tr.left() + corner, outerY);
-            rim.lineTo(tr.right() - corner, outerY);
-            rim.quadTo(tr.right(), outerY, tr.right(), outerY - corner);
-        }
-        if (!selected) {
-            fill.closeSubpath();
-            rim.lineTo(tr.right(), openY);
-            rim.lineTo(tr.left(), openY);
-            rim.closeSubpath();
-        }
-    } else {
-        const int outerX = east ? tr.right() : tr.left();   // rounded edge
-        const int openX  = east ? tr.left() : tr.right();   // page side
-        if (east) {
-            fill.moveTo(openX, tr.top());
-            fill.lineTo(outerX - corner, tr.top());
-            fill.quadTo(outerX, tr.top(), outerX, tr.top() + corner);
-            fill.lineTo(outerX, tr.bottom() - corner);
-            fill.quadTo(outerX, tr.bottom(), outerX - corner, tr.bottom());
-            fill.lineTo(openX, tr.bottom());
-            rim.moveTo(outerX - corner, tr.top());
-            rim.quadTo(outerX, tr.top(), outerX, tr.top() + corner);
-            rim.lineTo(outerX, tr.bottom() - corner);
-            rim.quadTo(outerX, tr.bottom(), outerX - corner, tr.bottom());
-        } else { // west
-            fill.moveTo(openX, tr.top());
-            fill.lineTo(outerX + corner, tr.top());
-            fill.quadTo(outerX, tr.top(), outerX, tr.top() + corner);
-            fill.lineTo(outerX, tr.bottom() - corner);
-            fill.quadTo(outerX, tr.bottom(), outerX + corner, tr.bottom());
-            fill.lineTo(openX, tr.bottom());
-            rim.moveTo(outerX + corner, tr.top());
-            rim.quadTo(outerX, tr.top(), outerX, tr.top() + corner);
-            rim.lineTo(outerX, tr.bottom() - corner);
-            rim.quadTo(outerX, tr.bottom(), outerX + corner, tr.bottom());
-        }
-        if (!selected) {
-            fill.closeSubpath();
-            rim.lineTo(openX, tr.bottom());
-            rim.lineTo(openX, tr.top());
-            rim.closeSubpath();
-        }
-    }
+    // Rounded tab: half-pixel face so the AA stroke stays off the extreme
+    // corner pixels (same sparkle fix as drawButtonPanel).  The active tab's
+    // page side is covered by the pane, so stroking the full rounded border
+    // there is invisible.
+    const QRectF rf = QRectF(tr).adjusted(0.5, 0.5, -0.5, -0.5);
+    const qreal radius = 3.0;
 
     p->save();
     p->setRenderHint(QPainter::Antialiasing, true);
@@ -1027,22 +1619,11 @@ void KeramikStyle::drawTabShape(QPainter *p, const QStyleOptionTab *tab) const
     }
     p->setPen(Qt::NoPen);
     p->setBrush(grad);
-    p->drawPath(fill);
+    p->drawRoundedRect(rf, radius, radius);
 
     p->setBrush(Qt::NoBrush);
-    p->setPen(c->border.lighter(140));
-    p->drawPath(rim);
-
-    // Ceramic sheen along the outer edge.
-    p->setPen(c->innerTop);
-    if (north)
-        p->drawLine(tr.left() + 4, tr.top() + 1, tr.right() - 4, tr.top() + 1);
-    else if (south)
-        p->drawLine(tr.left() + 4, tr.bottom() - 1, tr.right() - 4, tr.bottom() - 1);
-    else if (east)
-        p->drawLine(tr.right() - 1, tr.top() + 4, tr.right() - 1, tr.bottom() - 4);
-    else // west
-        p->drawLine(tr.left() + 1, tr.top() + 4, tr.left() + 1, tr.bottom() - 4);
+    p->setPen(QPen(c->border.lighter(140), 0));
+    p->drawRoundedRect(rf, radius, radius);
 
     p->restore();
 }
@@ -1090,6 +1671,7 @@ void KeramikStyle::drawMenuItem(QPainter *p, const QStyleOptionMenuItem *mi) con
     const QRect r = mi->rect;
     const bool selected = mi->state & State_Selected;
     const bool enabled = mi->state & State_Enabled;
+    const bool reverse = mi->direction == Qt::RightToLeft;
 
     // Row background ------------------------------------------------------
     // Filled first for every row, separators included, exactly as the
@@ -1099,7 +1681,7 @@ void KeramikStyle::drawMenuItem(QPainter *p, const QStyleOptionMenuItem *mi) con
     if (selected) {
         QStyleOption sel(*mi);
         sel.state |= State_Selected;
-        drawHighlightPanel(p, &sel, r.adjusted(0, 0, -1, -1), 3);
+        drawHighlightPanel(p, &sel, r);
     } else {
         p->save();
         p->setPen(Qt::NoPen);
@@ -1126,18 +1708,25 @@ void KeramikStyle::drawMenuItem(QPainter *p, const QStyleOptionMenuItem *mi) con
     // boxes; a plain text menu keeps a flush left edge (as in the original).
     const int maxpmw = mi->maxIconWidth;
     const int checkcol = mi->menuHasCheckableItems ? qMax(maxpmw, 20) : maxpmw;
-    const QRect checkRect(r.left() + itemFrame, r.top() + itemFrame,
-                          qMax(checkcol, 1) - 1, r.height() - 2 * itemFrame);
+    // Mirrored for RTL menus so the check column sits on the far edge, clear
+    // of the mirrored shortcut column and label.
+    const QRect checkRect = visualRect(mi->direction, r,
+            QRect(r.left() + itemFrame, r.top() + itemFrame,
+                  qMax(checkcol, 1) - 1, r.height() - 2 * itemFrame));
     if (mi->checked) {
         // Sunken shade panel behind the check column (the original's
         // qDrawShadePanel with a Midlight fill), used both with an icon
         // (panel under the icon) and without one (panel under the check).
-        drawMenuCheckPanel(p, checkRect.adjusted(1, 1, -1, -1), mi->palette);
-        if (mi->icon.isNull())
-            drawCheckMark(p, checkRect.adjusted(0, 0, -1, -1),
-                          enabled ? (selected ? mi->palette.color(QPalette::HighlightedText)
-                                              : mi->palette.color(QPalette::ButtonText))
-                                  : c->border);
+        const QRect checkFace = checkRect.adjusted(1, 1, -1, -1);
+        drawMenuCheckPanel(p, checkFace, mi->palette);
+        if (mi->icon.isNull()) {
+            // Shade panel is Midlight; PE_IndicatorMenuCheckMark always paints
+            // ButtonText (not HighlightedText) so the tick stays visible when
+            // the row behind is selected.
+            QStyleOption mark(*mi);
+            mark.rect = checkFace;
+            drawPrimitive(PE_IndicatorMenuCheckMark, &mark, p, nullptr);
+        }
     }
 
     if (!mi->icon.isNull()) {
@@ -1172,29 +1761,39 @@ void KeramikStyle::drawMenuItem(QPainter *p, const QStyleOptionMenuItem *mi) con
 
         const int shortcutW = menuItemTabWidth(mi);
         const int xm = itemFrame + checkcol + itemHMargin;
-        const QRect textRect(r.left() + xm, r.top(),
-                             r.width() - xm - shortcutW - arrowHMargin
-                                     - itemHMargin * 3 - itemFrame + 1,
-                             r.height());
-        QColor textColor = !enabled
-                ? mi->palette.color(QPalette::Disabled, QPalette::Text)
-                : selected ? mi->palette.color(QPalette::HighlightedText)
-                           : mi->palette.color(QPalette::Text);
-        p->setPen(textColor);
+        // Right gutter must match what CT_MenuItem adds (rightBorder, plus an
+        // arrow gutter for sub-menus).  The previous formula also subtracted
+        // arrowHMargin + 3*itemHMargin + itemFrame on every row (~25px that
+        // sizeFromContents never provided), so long labels without a
+        // shortcut were clipped on the right.
+        int rightPad = rightBorder;
+        if (mi->menuItemType == QStyleOptionMenuItem::SubMenu)
+            rightPad += arrowHMargin;
+        const int tw = qMax(1, r.width() - xm - shortcutW - rightPad + 1);
+        // Label starts after the check/icon column on the left, or after the
+        // accelerator column on the right when the menu is reversed.
+        const QRect textRect(reverse
+                ? r.left() + shortcutW + rightBorder + itemHMargin + itemFrame - 1
+                : r.left() + xm,
+                r.top(), tw, r.height());
 
         if (!shortcut.isEmpty()) {
-            // The accelerator column is right-aligned at the menu's shortcut
-            // edge (rightBorder + itemHMargin + itemFrame from the right).
-            const QRect shortcutRect(r.right() - shortcutW - rightBorder
-                                     - itemHMargin - itemFrame + 1, r.top(),
-                                     shortcutW, r.height());
-            drawItemText(p, shortcutRect, Qt::AlignVCenter | Qt::AlignRight
+            // The accelerator column sits at the far edge of the menu (right
+            // for LTR, left for RTL).
+            const QRect shortcutRect(reverse
+                    ? r.left() + rightBorder + itemHMargin + itemFrame - 1
+                    : r.right() - shortcutW - rightBorder
+                            - itemHMargin - itemFrame + 1,
+                    r.top(), shortcutW, r.height());
+            drawItemText(p, shortcutRect, Qt::AlignVCenter
+                                          | (reverse ? Qt::AlignLeft : Qt::AlignRight)
                                           | Qt::TextSingleLine,
                          mi->palette, enabled, shortcut,
                          selected ? QPalette::HighlightedText : QPalette::Text);
         }
 
-        drawItemText(p, textRect, Qt::AlignVCenter | Qt::AlignLeft
+        drawItemText(p, textRect, Qt::AlignVCenter
+                                          | (reverse ? Qt::AlignRight : Qt::AlignLeft)
                                           | Qt::TextShowMnemonic | Qt::TextSingleLine,
                      mi->palette, enabled, text,
                      selected ? QPalette::HighlightedText : QPalette::Text);
@@ -1205,9 +1804,11 @@ void KeramikStyle::drawMenuItem(QPainter *p, const QStyleOptionMenuItem *mi) con
     // Sub-menu arrow -----------------------------------------------------------
     if (mi->menuItemType == QStyleOptionMenuItem::SubMenu) {
         const int dim = pixelMetric(PM_MenuButtonIndicator, mi, nullptr);
-        const QRect ar(r.right() - arrowHMargin - itemFrame - dim + 1,
-                       r.top() + (r.height() - dim) / 2, dim, dim);
-        drawArrow(p, PE_IndicatorArrowRight, ar,
+        const QRect ar(reverse
+                ? r.left() + arrowHMargin + itemFrame - 1
+                : r.right() - arrowHMargin - itemFrame - dim + 1,
+                r.top() + (r.height() - dim) / 2, dim, dim);
+        drawArrow(p, reverse ? PE_IndicatorArrowLeft : PE_IndicatorArrowRight, ar,
                   !enabled ? c->border
                            : selected ? mi->palette.color(QPalette::HighlightedText)
                                       : mi->palette.color(QPalette::Text));
@@ -1221,15 +1822,105 @@ void KeramikStyle::drawControl(ControlElement ce, const QStyleOption *opt,
     const QRect r = opt->rect;
 
     switch (ce) {
+    // Push buttons --------------------------------------------------------------
+    case CE_PushButton: {
+        // Keramik draws its own menu indicator: the base Windows style paints
+        // a solid grey triangle, which does not match the thin ceramic arrows
+        // used everywhere else in the theme.
+        const QStyleOptionButton *btn = qstyleoption_cast<const QStyleOptionButton *>(opt);
+        if (!btn)
+            break;
+        // Flat buttons keep the base-style semantics: no panel except when
+        // pressed/checked.  Drawing a hover panel would be a behaviour
+        // change beyond this fix.
+        const bool flat = btn->features & QStyleOptionButton::Flat;
+        if (!flat || (btn->state & (State_Sunken | State_On)))
+            drawButtonPanel(p, opt);
+        if (btn->state & State_HasFocus) {
+            QStyleOptionFocusRect fr;
+            fr.QStyleOption::operator=(*btn);
+            fr.rect = subElementRect(SE_PushButtonFocusRect, btn, widget);
+            drawPrimitive(PE_FrameFocusRect, &fr, p, widget);
+        }
+        QStyleOptionButton labelOpt(*btn);
+        if (btn->features & QStyleOptionButton::HasMenu) {
+            const int mbi = pixelMetric(PM_MenuButtonIndicator, btn, widget);
+            // Ceramic chevron bbox is 8px; keep the indicator box ≥ that.
+            const int aw = mbi - 4;
+            QRect ar(btn->rect.right() - mbi - 1,
+                     btn->rect.y() + (btn->rect.height() - aw) / 2,
+                     aw, aw);
+            ar = visualRect(btn->direction, btn->rect, ar);
+            const QColor color = (btn->state & State_Enabled)
+                    ? btn->palette.color(QPalette::ButtonText) : c->border;
+            drawArrow(p, PE_IndicatorArrowDown, ar, color);
+
+            // The base Windows CE_PushButtonLabel paints its own solid menu
+            // triangle when HasMenu is set, so clear the flag and manually
+            // shrink the text rect to keep the ceramic arrow as the only
+            // indicator without letting narrow labels run into it.
+            labelOpt.features &= ~QStyleOptionButton::HasMenu;
+            if (btn->direction == Qt::RightToLeft)
+                labelOpt.rect.setLeft(btn->rect.left() + mbi);
+            else
+                labelOpt.rect.setRight(btn->rect.right() - mbi);
+        }
+        QProxyStyle::drawControl(CE_PushButtonLabel, &labelOpt, p, widget);
+        return;
+    }
+
     // Progress bar --------------------------------------------------------------
+    case CE_ProgressBar: {
+        // Route the three sub-elements through our own subElementRect so the
+        // groove/contents/label coordinates stay consistent (the base Windows
+        // style insets contents by 3px and misaligns the block with the
+        // groove's shadow lines).
+        const QStyleOptionProgressBar *pb =
+                qstyleoption_cast<const QStyleOptionProgressBar *>(opt);
+        if (pb) {
+            QStyleOptionProgressBar subopt = *pb;
+            subopt.rect = subElementRect(SE_ProgressBarGroove, pb, widget);
+            drawControl(CE_ProgressBarGroove, &subopt, p, widget);
+            subopt.rect = subElementRect(SE_ProgressBarContents, pb, widget);
+            drawControl(CE_ProgressBarContents, &subopt, p, widget);
+            if (pb->textVisible) {
+                subopt.rect = subElementRect(SE_ProgressBarLabel, pb, widget);
+                drawControl(CE_ProgressBarLabel, &subopt, p, widget);
+            }
+        }
+        break;
+    }
+
     case CE_ProgressBarGroove:
         drawGroove(p, opt, r.adjusted(1, 1, -2, -2));
         break;
 
     case CE_ProgressBarContents:
-        // Handled by the base style through PE_IndicatorProgressChunk.
-        QProxyStyle::drawControl(ce, opt, p, widget);
+        drawProgressContents(p, opt);
         break;
+
+    case CE_ProgressBarLabel:
+        if (const QStyleOptionProgressBar *pb =
+                qstyleoption_cast<const QStyleOptionProgressBar *>(opt))
+            drawProgressLabel(p, pb);
+        break;
+
+    // Combo box ---------------------------------------------------------------
+    case CE_ComboBoxLabel: {
+        // QComboBox::initStyleOption marks a focused, non-editable combo
+        // State_Selected, so the base QWindowsStyle paints the current text
+        // in QPalette::HighlightedText (white) although Keramik draws no
+        // highlight background here -- the text became invisible on the grey
+        // button face.  The focus is already shown by the focus rect, so
+        // drop the flags and keep the normal text colour.
+        const QStyleOptionComboBox *cmb = qstyleoption_cast<const QStyleOptionComboBox *>(opt);
+        if (!cmb)
+            break;
+        QStyleOptionComboBox clean(*cmb);
+        clean.state &= ~(State_HasFocus | State_Selected);
+        QProxyStyle::drawControl(CE_ComboBoxLabel, &clean, p, widget);
+        break;
+    }
 
     // Tabs ----------------------------------------------------------------------
     case CE_TabBarTab: {
@@ -1272,6 +1963,26 @@ void KeramikStyle::drawControl(ControlElement ce, const QStyleOption *opt,
 
     case CE_MenuEmptyArea:
         // The menu background is drawn by PE_PanelMenu.
+        break;
+
+    // Long menus --------------------------------------------------------------
+    case CE_MenuScroller:
+        drawMenuScroller(p, opt);
+        break;
+
+    // Tool boxes ---------------------------------------------------------------
+    case CE_ToolBoxTabShape:
+        drawToolBoxTab(p, opt);
+        break;
+
+    // Dock widgets -------------------------------------------------------------
+    case CE_DockWidgetTitle:
+        drawDockWidgetTitle(p, opt);
+        break;
+
+    // Status bar ---------------------------------------------------------------
+    case CE_SizeGrip:
+        drawSizeGrip(p, opt);
         break;
 
     // Tool bar ------------------------------------------------------------------
@@ -1330,8 +2041,9 @@ void KeramikStyle::drawControl(ControlElement ce, const QStyleOption *opt,
 
     // Header --------------------------------------------------------------------
     case CE_HeaderSection:
-        // The pressed state is preserved and read by drawButtonPanel.
-        drawButtonPanel(p, opt);
+        // Header sections live inside the view, so they stay square like the
+        // other inside controls (scrollbar buttons, spinbox arrows).
+        drawButtonPanel(p, opt, false);
         p->save();
         p->setPen(c->border.lighter(140));
         p->drawLine(r.left(), r.bottom(), r.right(), r.bottom());
@@ -1402,8 +2114,7 @@ void KeramikStyle::drawComplexControl(ComplexControl cc, const QStyleOptionCompl
             const QRect rippleRect = QStyle::visualRect(opt->direction, r,
                     QRect(ar.left() - 15, ar.top() + 2, 11, ar.height() - 4));
             if (rippleRect.width() > 2 && rippleRect.height() > 4)
-                drawRipple(p, rippleRect,
-                           disabled ? c->border : opt->palette.color(QPalette::ButtonText));
+                drawRipple(p, opt, rippleRect);
             const QRect arrowRect = QStyle::visualRect(opt->direction, r,
                     QRect(ar.right() - 11, ar.top(), 9, ar.height()));
             drawComboArrow(p, arrowRect,
@@ -1437,7 +2148,7 @@ void KeramikStyle::drawComplexControl(ComplexControl cc, const QStyleOptionCompl
                 QStyleOption thumb(*opt);
                 if (opt->activeSubControls & SC_SliderHandle)
                     thumb.state |= State_MouseOver;
-                drawHighlightPanel(p, &thumb, handle, 3);
+                drawHighlightPanel(p, &thumb, handle);
             }
         }
 
@@ -1462,59 +2173,58 @@ void KeramikStyle::drawComplexControl(ComplexControl cc, const QStyleOptionCompl
         const QRect groove = subControlRect(cc, opt, SC_ScrollBarGroove, widget);
         const QRect slider = subControlRect(cc, opt, SC_ScrollBarSlider, widget);
 
-        // Track: recessed groove spanning the area between the buttons.
+        // Track: flat strip (no L-shadow).  Still painted — same fill/border
+        // as drawGroove, without the recessed bevel.
         if (groove.isValid())
-            drawGroove(p, opt, groove);
+            drawGroove(p, opt, groove, false);
 
         // Thumb: palette-highlight panel, brighter while hovered/dragged.
         if (slider.isValid() && opt->subControls & SC_ScrollBarSlider) {
             QStyleOption thumb(*opt);
             if (opt->activeSubControls & SC_ScrollBarSlider)
                 thumb.state |= State_MouseOver;
-            drawHighlightPanel(p, &thumb, slider, 2);
+            drawHighlightPanel(p, &thumb, slider, false);
         }
 
         // End buttons. The horizontal add line keeps the original Keramik
         // "double arrow" design: a wide button with a divider whose two
-        // halves scroll by page and by line respectively.
+        // halves scroll by page and by line respectively.  Buttons stay
+        // square so they butt flush against the track.
         if (subline.isValid() && opt->subControls & SC_ScrollBarSubLine)
             drawScrollBarButton(p, opt, subline,
                                 horiz ? PE_IndicatorArrowLeft : PE_IndicatorArrowUp);
         if (addline.isValid() && opt->subControls & SC_ScrollBarAddLine) {
             QStyleOption btn(*opt);
             btn.rect = addline;
-            drawButtonPanel(p, &btn);
+            drawButtonPanel(p, &btn, false);
             const QColor arrowColor = (opt->state & (State_Sunken | State_On))
                     ? c->border : opt->palette.color(QPalette::ButtonText);
             const QColor divider = opt->palette.color(QPalette::ButtonText);
+            const int mx = addline.center().x();
+            const int my = addline.center().y();
+            p->save();
+            p->setPen(divider);
+            if (horiz)
+                p->drawLine(mx, my - 3, mx, my + 3);
+            else
+                p->drawLine(mx - 3, my, mx + 3, my);
+            p->restore();
             if (horiz) {
-                // Short vertical divider at the middle of the double arrow.
-                p->save();
-                p->setPen(divider);
-                p->drawLine(addline.center().x() - 1,
-                            addline.center().y() - 3,
-                            addline.center().x() - 1,
-                            addline.center().y() + 3);
-                p->restore();
                 const QRect left(addline.left(), addline.top(),
                                  addline.width() / 2, addline.height());
                 const QRect right(left.right() + 1, addline.top(),
                                   addline.width() - left.width(), addline.height());
-                drawArrow(p, PE_IndicatorArrowLeft, left, arrowColor);
-                drawArrow(p, PE_IndicatorArrowRight, right, arrowColor);
+                // Inset past the bevel so the glyph centres in the face, not
+                // in a rect that still includes the 1px border.
+                drawArrow(p, PE_IndicatorArrowLeft, left.adjusted(1, 1, -1, -1), arrowColor);
+                drawArrow(p, PE_IndicatorArrowRight, right.adjusted(1, 1, -1, -1), arrowColor);
             } else {
-                // Short horizontal divider at the middle of the double arrow.
-                p->save();
-                p->setPen(divider);
-                p->drawLine(addline.center().x() - 4, addline.center().y(),
-                            addline.center().x() + 2, addline.center().y());
-                p->restore();
                 const QRect top(addline.left(), addline.top(),
                                 addline.width(), addline.height() / 2);
                 const QRect bottom(top.left(), top.bottom() + 1, addline.width(),
                                    addline.height() - top.height());
-                drawArrow(p, PE_IndicatorArrowUp, top, arrowColor);
-                drawArrow(p, PE_IndicatorArrowDown, bottom, arrowColor);
+                drawArrow(p, PE_IndicatorArrowUp, top.adjusted(1, 1, -1, -1), arrowColor);
+                drawArrow(p, PE_IndicatorArrowDown, bottom.adjusted(1, 1, -1, -1), arrowColor);
             }
         }
         break;
@@ -1539,8 +2249,8 @@ void KeramikStyle::drawComplexControl(ComplexControl cc, const QStyleOptionCompl
                 btn.rect = up;
                 if (opt->activeSubControls & SC_SpinBoxUp)
                     btn.state |= State_Sunken;
-                drawButtonPanel(p, &btn);
-                drawArrow(p, PE_IndicatorArrowUp, up,
+                drawButtonPanel(p, &btn, false);
+                drawArrow(p, PE_IndicatorArrowUp, up.adjusted(1, 1, -1, -1),
                           (opt->state & State_Enabled)
                                   ? opt->palette.color(QPalette::ButtonText) : c->border);
             }
@@ -1552,14 +2262,24 @@ void KeramikStyle::drawComplexControl(ComplexControl cc, const QStyleOptionCompl
                 btn.rect = down;
                 if (opt->activeSubControls & SC_SpinBoxDown)
                     btn.state |= State_Sunken;
-                drawButtonPanel(p, &btn);
-                drawArrow(p, PE_IndicatorArrowDown, down,
+                drawButtonPanel(p, &btn, false);
+                drawArrow(p, PE_IndicatorArrowDown, down.adjusted(1, 1, -1, -1),
                           (opt->state & State_Enabled)
                                   ? opt->palette.color(QPalette::ButtonText) : c->border);
             }
         }
         break;
     }
+
+    // Tool buttons ---------------------------------------------------------------
+    case CC_ToolButton:
+        drawToolButton(p, opt, widget);
+        break;
+
+    // Group boxes -------------------------------------------------------------
+    case CC_GroupBox:
+        drawGroupBox(p, opt, widget);
+        break;
 
     default:
         QProxyStyle::drawComplexControl(cc, opt, p, widget);
@@ -1628,6 +2348,19 @@ int KeramikStyle::pixelMetric(PixelMetric pm, const QStyleOption *opt,
         return qRound(QStyleHelper::dpiScaled(22, opt));
     case PM_SplitterWidth:
         return qRound(QStyleHelper::dpiScaled(6, opt));
+    // Tool-bar layout -------------------------------------------------------
+    case PM_ToolBarFrameWidth:
+        return 1;
+    case PM_ToolBarItemMargin:
+        return qRound(QStyleHelper::dpiScaled(2, opt));
+    case PM_ToolBarItemSpacing:
+        return qRound(QStyleHelper::dpiScaled(2, opt));
+    case PM_ToolBarHandleExtent:
+        return qRound(QStyleHelper::dpiScaled(10, opt));
+    case PM_ToolBarSeparatorExtent:
+        return qRound(QStyleHelper::dpiScaled(8, opt));
+    case PM_DockWidgetFrameWidth:
+        return 1;
     default:
         break;
     }
@@ -1699,6 +2432,26 @@ QRect KeramikStyle::subControlRect(ComplexControl cc, const QStyleOptionComplex 
     return QProxyStyle::subControlRect(cc, opt, sc, widget);
 }
 
+QRect KeramikStyle::subElementRect(SubElement sr, const QStyleOption *opt,
+                                   const QWidget *widget) const
+{
+    switch (sr) {
+    case SE_ProgressBarGroove:
+    case SE_ProgressBarLabel:
+        // The base Windows style keys off QStyleOptionProgressBar::bottomToTop
+        // for direction, which QProgressBar no longer sets on Qt 6, so it
+        // hands back broken rects and reserves space for the label above the
+        // bar.  This style draws the whole bar itself, so both span the full
+        // option rect and the label stays centred inside the groove.
+        return opt->rect;
+    case SE_ProgressBarContents:
+        return opt->rect.adjusted(1, 1, -1, -1);
+    default:
+        break;
+    }
+    return QProxyStyle::subElementRect(sr, opt, widget);
+}
+
 QSize KeramikStyle::sizeFromContents(ContentsType ct, const QStyleOption *opt,
                                      const QSize &contentsSize, const QWidget *widget) const
 {
@@ -1735,17 +2488,19 @@ QSize KeramikStyle::sizeFromContents(ContentsType ct, const QStyleOption *opt,
         return QSize(contentsSize.width() + 4, h);
     }
     case CT_MenuItem: {
-        // Original Keramik CT_PopupMenuItem formula. The accelerator width
-        // itself is part of contentsSize (added by QMenu as tabWidth), so
-        // only the gaps and columns are added here.
+        // Keep the drawMenuItem layout and this formula in lock-step: the
+        // label sits after xm = itemFrame+checkcol+itemHMargin, and the
+        // right side keeps rightBorder (+ arrowHMargin for sub-menus).
         if (const QStyleOptionMenuItem *mi = qstyleoption_cast<const QStyleOptionMenuItem *>(opt)) {
             if (mi->menuItemType == QStyleOptionMenuItem::Separator)
                 return QSize(10, 3);
             int w = contentsSize.width();
+            // Left gutter matching drawMenuItem's xm without the check column.
+            w += itemFrame + itemHMargin;
             if (mi->text.contains(QLatin1Char('\t')))
                 w += itemHMargin + itemFrame * 2 + 7;   // gap before the accelerator
             if (mi->menuItemType == QStyleOptionMenuItem::SubMenu)
-                w += 2 * arrowHMargin;                  // sub-menu arrow
+                w += arrowHMargin;                      // matches draw rightPad
             const int maxpmw = mi->maxIconWidth;
             if (maxpmw > 0)
                 w += maxpmw + 6;                        // icon column + spacing
@@ -1772,6 +2527,9 @@ int KeramikStyle::styleHint(StyleHint sh, const QStyleOption *opt,
     case SH_EtchDisabledText:
         return 1;
     case SH_Menu_MouseTracking:
+        return 1;
+    case SH_Menu_Scrollable:
+        // Over-long menus scroll with the ceramic up/down scroller buttons.
         return 1;
     default:
         break;

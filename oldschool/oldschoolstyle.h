@@ -54,7 +54,9 @@ class OldschoolStyle : public QCommonStyle
 {
     Q_OBJECT
 public:
-    explicit OldschoolStyle(bool useHighlightCols=false);
+    // 当 forceClassicPalette 为 true 时（对应各 "*-classic" 键），样式安装时
+    // 通过 polish(QPalette&) 强制套用 standardPalette() 的经典配色。
+    explicit OldschoolStyle(bool useHighlightCols=false, bool forceClassicPalette=false);
     virtual ~OldschoolStyle();
 
     void setUseHighlightColors(bool);
@@ -106,6 +108,7 @@ protected:
 
 private:
     bool highlightCols;
+    bool m_forceClassicPalette;
     QList<QProgressBar *> bars;
     int animationFps;
     int animateTimer;

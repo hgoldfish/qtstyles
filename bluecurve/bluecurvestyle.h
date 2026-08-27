@@ -46,10 +46,13 @@ class BluecurveStyle : public QCommonStyle
     Q_OBJECT
 
 public:
-    BluecurveStyle();
+    // 当 forceClassicPalette 为 true 时（对应 "bluecurve-classic" 键），样式
+    // 安装时通过 polish(QPalette&) 强制套用 standardPalette() 的经典配色。
+    explicit BluecurveStyle(bool forceClassicPalette = false);
     ~BluecurveStyle();
 
     void polish(QWidget *widget) override;
+    void polish(QPalette &palette) override;
     void unpolish(QWidget *widget) override;
     bool eventFilter(QObject *watched, QEvent *event) override;
 
@@ -116,6 +119,7 @@ private:
     void drawSliderGrip(QPainter *p, const ColorData *cdata, const QRect &r, bool horizontal) const;
 
     mutable QHash<quint64, ColorData> m_colorCache;
+    bool m_forceClassicPalette;
 };
 
 #endif // BLUECURVESTYLE_H
