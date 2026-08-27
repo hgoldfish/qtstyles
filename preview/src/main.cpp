@@ -67,7 +67,9 @@ int main(int argc, char *argv[])
     parser.setApplicationDescription(QStringLiteral("Preview the qtstyles widget styles "
                                                     "(dirtylooks, oldschool, newschool, highschool, "
                                                     "plastic, phase, winxp, winxp-blue, winxp-silver, "
-                                                    "winxp-olive, bluecurve, keramik, platinum)."));
+                                                    "winxp-olive, bluecurve, keramik, platinum; "
+                                                    "each also has a -classic variant that forces "
+                                                    "its classic palette)."));
     parser.addHelpOption();
     parser.addVersionOption();
 

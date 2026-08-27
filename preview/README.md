@@ -66,10 +66,10 @@ Unchecking restores the startup (system) palette.
 Every `standardPalette()` is self-contained (all roles are set explicitly), so
 switching styles never leaks colours from the previously applied palette.
 
-The three `winxp-blue`, `winxp-silver` and `winxp-olive` variants are the
-exception: their Luna palette is hard-coded and applied when the style is
-installed, so they always show their fixed colours no matter how the option is
-set.
+Each style's `-classic` variant (`keramik-classic`, `oldschool-classic`, …) and
+the three `winxp-blue`, `winxp-silver` and `winxp-olive` Luna variants are the
+exceptions: their palette is hard-coded and applied when the style is installed,
+so they always show their fixed colours no matter how the option is set.
 
 The `Misc` tab shows the standard Qt dialogs (`QMessageBox`, `QColorDialog`,
 `QFontDialog`, `QFileDialog`, `QInputDialog`, `QProgressDialog`) rendered in

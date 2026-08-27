@@ -37,12 +37,19 @@
 #include "phasestyle.h"
 #include "winxpstyle.h"
 
-// 单一来源：本仓库内置样式的名字。构造函数的样式列表与 createStyle()
-// 的分派都以此为准（if 链的顺序与名字索引一一对应）。
+// 内置样式名列表：样式下拉框顺序与 isBuiltinStyleName() 共用。
+// createStyle() 按名字字面量分派，不依赖本数组下标。
 static const char *const kBuiltinStyleNames[] = {
-    "dirtylooks", "oldschool", "newschool", "highschool", "plastic", "phase",
-    "winxp", "winxp-blue", "winxp-silver", "winxp-olive",
-    "bluecurve", "keramik", "platinum"
+    "dirtylooks", "dirtylooks-classic",
+    "oldschool", "oldschool-classic",
+    "newschool", "newschool-classic",
+    "highschool", "highschool-classic",
+    "plastic", "plastic-classic",
+    "phase", "phase-classic",
+    "winxp", "winxp-classic", "winxp-blue", "winxp-silver", "winxp-olive",
+    "bluecurve", "bluecurve-classic",
+    "keramik", "keramik-classic",
+    "platinum", "platinum-classic"
 };
 
 static bool isBuiltinStyleName(const QString &name)
@@ -54,44 +61,67 @@ static bool isBuiltinStyleName(const QString &name)
     return false;
 }
 
-// winxp-blue / winxp-silver / winxp-olive 的 Luna 配色由 polish(QPalette&)
-// 在样式安装时强制应用，不受「应用经典配色」开关影响；否则用
-// standardPalette()（Win2000 建议色）覆盖会冲掉 Luna。
-static bool isLunaVariant(const QString &name)
+// 这些变体在 setStyle() 的 polish(QPalette&) 阶段就已强制应用固定配色
+// （winxp 的三种 Luna 配色、以及各 style 的 -classic 变体），因此「应用
+// 经典配色」开关再用 standardPalette() 覆盖是多余且会冲掉 Luna。
+static bool isPaletteForcingVariant(const QString &name)
 {
-    return name.compare(QLatin1String("winxp-blue"), Qt::CaseInsensitive) == 0
+    if (name.compare(QLatin1String("winxp-blue"), Qt::CaseInsensitive) == 0
         || name.compare(QLatin1String("winxp-silver"), Qt::CaseInsensitive) == 0
-        || name.compare(QLatin1String("winxp-olive"), Qt::CaseInsensitive) == 0;
+        || name.compare(QLatin1String("winxp-olive"), Qt::CaseInsensitive) == 0)
+        return true;
+    return name.endsWith(QLatin1String("-classic"), Qt::CaseInsensitive)
+        && isBuiltinStyleName(name);
 }
 
 QStyle *createStyle(const QString &name)
 {
-    if (name.compare(QLatin1String(kBuiltinStyleNames[0]), Qt::CaseInsensitive) == 0)
+    if (name.compare(QLatin1String("dirtylooks"), Qt::CaseInsensitive) == 0)
         return new DirtylooksStyle;
-    if (name.compare(QLatin1String(kBuiltinStyleNames[1]), Qt::CaseInsensitive) == 0)
+    if (name.compare(QLatin1String("dirtylooks-classic"), Qt::CaseInsensitive) == 0)
+        return new DirtylooksStyle(true);
+    if (name.compare(QLatin1String("oldschool"), Qt::CaseInsensitive) == 0)
         return new OldschoolStyle;
-    if (name.compare(QLatin1String(kBuiltinStyleNames[2]), Qt::CaseInsensitive) == 0)
+    if (name.compare(QLatin1String("oldschool-classic"), Qt::CaseInsensitive) == 0)
+        return new OldschoolStyle(false, true);
+    if (name.compare(QLatin1String("newschool"), Qt::CaseInsensitive) == 0)
         return new NewschoolStyle;
-    if (name.compare(QLatin1String(kBuiltinStyleNames[3]), Qt::CaseInsensitive) == 0)
+    if (name.compare(QLatin1String("newschool-classic"), Qt::CaseInsensitive) == 0)
+        return new NewschoolStyle(false, true);
+    if (name.compare(QLatin1String("highschool"), Qt::CaseInsensitive) == 0)
         return new HighschoolStyle;
-    if (name.compare(QLatin1String(kBuiltinStyleNames[4]), Qt::CaseInsensitive) == 0)
+    if (name.compare(QLatin1String("highschool-classic"), Qt::CaseInsensitive) == 0)
+        return new HighschoolStyle(false, true);
+    if (name.compare(QLatin1String("plastic"), Qt::CaseInsensitive) == 0)
         return new PlasticStyle;
-    if (name.compare(QLatin1String(kBuiltinStyleNames[5]), Qt::CaseInsensitive) == 0)
+    if (name.compare(QLatin1String("plastic-classic"), Qt::CaseInsensitive) == 0)
+        return new PlasticStyle(true);
+    if (name.compare(QLatin1String("phase"), Qt::CaseInsensitive) == 0)
         return new PhaseStyle;
-    if (name.compare(QLatin1String(kBuiltinStyleNames[6]), Qt::CaseInsensitive) == 0)
+    if (name.compare(QLatin1String("phase-classic"), Qt::CaseInsensitive) == 0)
+        return new PhaseStyle(true);
+    if (name.compare(QLatin1String("winxp"), Qt::CaseInsensitive) == 0)
         return new WinXPStyle(WinXPStyle::Classic);
-    if (name.compare(QLatin1String(kBuiltinStyleNames[7]), Qt::CaseInsensitive) == 0)
+    if (name.compare(QLatin1String("winxp-classic"), Qt::CaseInsensitive) == 0)
+        return new WinXPStyle(WinXPStyle::Blue, true);
+    if (name.compare(QLatin1String("winxp-blue"), Qt::CaseInsensitive) == 0)
         return new WinXPStyle(WinXPStyle::Blue);
-    if (name.compare(QLatin1String(kBuiltinStyleNames[8]), Qt::CaseInsensitive) == 0)
+    if (name.compare(QLatin1String("winxp-silver"), Qt::CaseInsensitive) == 0)
         return new WinXPStyle(WinXPStyle::Silver);
-    if (name.compare(QLatin1String(kBuiltinStyleNames[9]), Qt::CaseInsensitive) == 0)
+    if (name.compare(QLatin1String("winxp-olive"), Qt::CaseInsensitive) == 0)
         return new WinXPStyle(WinXPStyle::Olive);
-    if (name.compare(QLatin1String(kBuiltinStyleNames[10]), Qt::CaseInsensitive) == 0)
+    if (name.compare(QLatin1String("bluecurve"), Qt::CaseInsensitive) == 0)
         return new BluecurveStyle;
-    if (name.compare(QLatin1String(kBuiltinStyleNames[11]), Qt::CaseInsensitive) == 0)
+    if (name.compare(QLatin1String("bluecurve-classic"), Qt::CaseInsensitive) == 0)
+        return new BluecurveStyle(true);
+    if (name.compare(QLatin1String("keramik"), Qt::CaseInsensitive) == 0)
         return new KeramikStyle;
-    if (name.compare(QLatin1String(kBuiltinStyleNames[12]), Qt::CaseInsensitive) == 0)
+    if (name.compare(QLatin1String("keramik-classic"), Qt::CaseInsensitive) == 0)
+        return new KeramikStyle(true);
+    if (name.compare(QLatin1String("platinum"), Qt::CaseInsensitive) == 0)
         return new PlatinumStyle;
+    if (name.compare(QLatin1String("platinum-classic"), Qt::CaseInsensitive) == 0)
+        return new PlatinumStyle(true);
     return QStyleFactory::create(name);
 }
 
@@ -163,9 +193,10 @@ void PreviewWindow::applyStyle(const QString &name)
     qApp->setPalette(initialPalette_);
     qApp->setStyle(style);
     // 勾选「应用经典配色」时才套用 standardPalette()，否则保持系统配色。
-    // winxp 的三种 Luna 变体除外：其配色已在 setStyle() 的 polish(QPalette&)
-    // 中强制应用，再用 standardPalette() 覆盖会冲掉 Luna。
-    if (applyClassicAction_ && applyClassicAction_->isChecked() && !isLunaVariant(name))
+    // 强制配色的变体除外（-classic 变体与 winxp 的三种 Luna 变体）：其配色
+    // 已在 setStyle() 的 polish(QPalette&) 中强制应用，再用 standardPalette()
+    // 覆盖会冲掉 Luna。
+    if (applyClassicAction_ && applyClassicAction_->isChecked() && !isPaletteForcingVariant(name))
         qApp->setPalette(style->standardPalette());
 
     if (statusStyle_)
@@ -633,6 +664,7 @@ QWidget *PreviewWindow::createListsPage()
     table->setSelectionBehavior(QAbstractItemView::SelectItems);
     table->setShowGrid(true);
     table->setSortingEnabled(true);
+    table->sortByColumn(0, Qt::AscendingOrder);
     table->resizeColumnsToContents();
 
     QListView *listView = new QListView;
