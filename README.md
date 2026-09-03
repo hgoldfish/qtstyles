@@ -74,7 +74,7 @@ the widgets can use: the text/selection roles, the bevel ramp
 (Light/Midlight/Mid/Dark/Shadow) that buttons, frames, sliders and scroll bars
 draw with, the tool-tip and placeholder roles, link colours, and on Qt 6.8+ the
 `Accent` role (aliased to `Highlight`). The Disabled group is derived by the
-shared helper in `lib/qtstyles_palette.h`, so the returned palette is
+shared helper in `shared/qtstyles_palette.h`, so the returned palette is
 **self-contained**: it does not inherit from the palette active at call time.
 This matters when switching styles at run time — an incomplete palette would
 silently pick up roles from the previously applied palette.

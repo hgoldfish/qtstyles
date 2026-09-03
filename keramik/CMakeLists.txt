@@ -3,6 +3,6 @@ qt_add_plugin(keramikstyle
     plugin.cpp
 )
 target_link_libraries(keramikstyle PRIVATE Qt6::Widgets)
-target_include_directories(keramikstyle PRIVATE ${CMAKE_CURRENT_SOURCE_DIR}/../lib ${CMAKE_CURRENT_SOURCE_DIR}/../shared)
+target_include_directories(keramikstyle PRIVATE ${CMAKE_CURRENT_SOURCE_DIR}/../shared)
 
 install(TARGETS keramikstyle DESTINATION "${QT6_INSTALL_PLUGINS}/styles")

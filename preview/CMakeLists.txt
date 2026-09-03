@@ -27,6 +27,7 @@ qt_add_executable(preview
     ../shared/qstylehelper_p.h
     ../shared/qstylecache_p.h
     ../shared/qhexstring_p.h
+    ../shared/qtstyles_palette.h
 )
 
 target_include_directories(preview PRIVATE
@@ -39,7 +40,6 @@ target_include_directories(preview PRIVATE
     ../phase
     ../winxp
     ../shared
-    ../lib
 )
 
 # plasticstyle reads a platform theme hint through Qt private headers

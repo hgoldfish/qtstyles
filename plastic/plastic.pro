@@ -15,9 +15,6 @@ lessThan(QT_MAJOR_VERSION, 6) {
 
 QT = core core-private gui gui-private widgets
 
-# Shared style helpers (qtstyles_palette.h) live in ../lib.
-INCLUDEPATH += $$PWD/../lib
-
 HEADERS += plasticstyle.h
 SOURCES += plasticstyle.cpp
 SOURCES += plugin.cpp

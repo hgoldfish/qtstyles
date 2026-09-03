@@ -15,8 +15,7 @@ lessThan(QT_MAJOR_VERSION, 6) {
 
 QT = core gui widgets
 
-# Shared style helpers (qtstyles_palette.h) live in ../lib.
-INCLUDEPATH += $$PWD/../lib
+# Shared style helpers (qtstyles_palette.h / qstylehelper_p.h) live in ../shared.
 INCLUDEPATH += $$PWD/../shared
 
 HEADERS += newschoolstyle.h

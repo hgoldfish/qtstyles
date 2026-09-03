@@ -36,7 +36,8 @@ HEADERS += \
     ../winxp/winxpstyle.h \
     ../shared/qstylehelper_p.h \
     ../shared/qstylecache_p.h \
-    ../shared/qhexstring_p.h
+    ../shared/qhexstring_p.h \
+    ../shared/qtstyles_palette.h
 
 INCLUDEPATH += \
     ../bluecurve \
@@ -47,5 +48,4 @@ INCLUDEPATH += \
     ../plastic \
     ../phase \
     ../winxp \
-    ../shared \
-    ../lib
+    ../shared
