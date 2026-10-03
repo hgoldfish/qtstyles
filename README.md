@@ -181,3 +181,49 @@ original licenses:
   license.
 * `winxp/` is a port of WindowsModernStyle by Michał Męciński, distributed
   under the BSD license (see `winxp/COPYING`).
+
+## Screenshots
+
+One screenshot per `-classic` style, showing the **Buttons** page of the
+[preview](preview/README.md) program. A full gallery of all pages lives in
+[`docs/themes.md`](docs/themes.md).
+
+### oldschool-classic
+
+<img src="docs/screenshots/oldschool-classic/buttons.png" alt="oldschool-classic — Buttons" width="820">
+
+### newschool-classic
+
+<img src="docs/screenshots/newschool-classic/buttons.png" alt="newschool-classic — Buttons" width="820">
+
+### highschool-classic
+
+<img src="docs/screenshots/highschool-classic/buttons.png" alt="highschool-classic — Buttons" width="820">
+
+### plastic-classic
+
+<img src="docs/screenshots/plastic-classic/buttons.png" alt="plastic-classic — Buttons" width="820">
+
+### dirtylooks-classic
+
+<img src="docs/screenshots/dirtylooks-classic/buttons.png" alt="dirtylooks-classic — Buttons" width="820">
+
+### winxp-classic
+
+<img src="docs/screenshots/winxp-classic/buttons.png" alt="winxp-classic — Buttons" width="820">
+
+### phase-classic
+
+<img src="docs/screenshots/phase-classic/buttons.png" alt="phase-classic — Buttons" width="820">
+
+### bluecurve-classic
+
+<img src="docs/screenshots/bluecurve-classic/buttons.png" alt="bluecurve-classic — Buttons" width="820">
+
+### platinum-classic
+
+<img src="docs/screenshots/platinum-classic/buttons.png" alt="platinum-classic — Buttons" width="820">
+
+### keramik-classic
+
+<img src="docs/screenshots/keramik-classic/buttons.png" alt="keramik-classic — Buttons" width="820">
