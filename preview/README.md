@@ -74,3 +74,16 @@ so they always show their fixed colours no matter how the option is set.
 The `Misc` tab shows the standard Qt dialogs (`QMessageBox`, `QColorDialog`,
 `QFontDialog`, `QFileDialog`, `QInputDialog`, `QProgressDialog`) rendered in
 the active style, so the whole look can be evaluated.
+
+## Icons
+
+Toolbar and menu actions use standard freedesktop icon names
+(`document-new`, `edit-cut`, …) via `QIcon::fromTheme()`. A normal desktop
+session supplies an icon theme through the platform plugin, but the headless
+plugins (`offscreen`, `minimal`, `vnc`) report no theme at all — Qt would then
+return null icons and the toolbar would fall back to text labels. To keep the
+headless screenshots in `docs/screenshots/` complete, the previewer detects an
+empty theme name at startup, adds `<QStandardPaths data dir>/icons` (plus the
+legacy `~/.icons`) to `QIcon::themeSearchPaths()` and picks an installed theme.
+This is a no-op on a normal desktop; if no icon theme is installed at all, the
+toolbar simply shows its text labels.

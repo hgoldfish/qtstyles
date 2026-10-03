@@ -31,6 +31,11 @@ python3 docs/screenshots.py --build
 把每个 `-classic` 主题 × 每个页面的截图写入 `docs/screenshots/<style>/<tab>.png`。
 详见 [screenshots.py](screenshots.py)。
 
+> offscreen / minimal / vnc 等无头平台不提供图标主题，preview 会在启动时
+> 回退到 `<QStandardPaths 数据目录>/icons` 等标准目录并自动挑选一个已安装主题
+> （breeze/oxygen/Adwaita…），因此截图里的工具栏与菜单图标依旧完整；
+> 若宿主一个图标主题都没装，工具栏会退化为显示文字标签。
+
 ---
 
 ## bluecurve-classic
